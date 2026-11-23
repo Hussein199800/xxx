@@ -46,6 +46,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
             dao.zakatEstimates(), dao.zakatPayments(),
             dao.settings().filter { it.key in Snapshot.BACKUP_SETTING_KEYS },
             if (includeAudit) dao.audit() else emptyList(),
+            dao.members(), dao.budgets(), dao.recurring(),
         )
     }
 
@@ -94,7 +95,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
     }
 
     /** دخل أو مصروف بسيط. يعيد معرّف الحركة. */
-    suspend fun addIncomeExpense(income: Boolean, accountId: String, amountMinor: Long, categoryId: String?, date: LocalDate, note: String, party: String, requestId: String): String {
+    suspend fun addIncomeExpense(income: Boolean, accountId: String, amountMinor: Long, categoryId: String?, date: LocalDate, note: String, party: String, requestId: String, memberId: String? = null): String {
         existing(requestId)?.let { return it }
         if (amountMinor <= 0) throw LedgerException("المبلغ يجب أن يكون أكبر من صفر")
         return write {
@@ -103,7 +104,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
             val signed = if (income) amountMinor else -amountMinor
             guardNegative(acc, signed, date)
             val t = uuid()
-            dao.insertTxn(TxnEntity(t, (if (income) TxnType.INCOME else TxnType.EXPENSE).name, date.toString(), note.trim(), party.trim(), requestId, createdAtUtc = clock(), updatedAtUtc = clock()))
+            dao.insertTxn(TxnEntity(t, (if (income) TxnType.INCOME else TxnType.EXPENSE).name, date.toString(), note.trim(), party.trim(), requestId, createdAtUtc = clock(), updatedAtUtc = clock(), memberId = memberId))
             dao.insertEntries(listOf(EntryEntity(uuid(), t, acc.id, (if (income) EntryKind.INCOME else EntryKind.EXPENSE).name, signed, acc.currency.code, date.toString(), categoryId)))
             t
         }
@@ -293,7 +294,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
      * تعديل دخل/مصروف بسيط في مكانه مع سجل تعديل يحفظ القيم السابقة.
      * الحركات المرتبطة بدين أو تحويل تُصحَّح بالعكس ثم إعادة الإدخال.
      */
-    suspend fun editSimple(txnId: String, amountMinor: Long, categoryId: String?, date: LocalDate, note: String, party: String) = write {
+    suspend fun editSimple(txnId: String, amountMinor: Long, categoryId: String?, date: LocalDate, note: String, party: String, memberId: String? = null) = write {
         val t = dao.txn(txnId) ?: throw LedgerException("الحركة غير موجودة")
         if (t.type != TxnType.INCOME.name && t.type != TxnType.EXPENSE.name) throw LedgerException("هذه الحركة تُصحَّح بالعكس")
         if (t.reversedById != null) throw LedgerException("الحركة معكوسة")
@@ -305,7 +306,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         val inInventory = dao.inventories().any { it.status == "FINAL" && !LocalDate.parse(it.date).isBefore(LocalDate.parse(t.date).coerceAtMost(date)) }
         audit("txn", txnId, "edit", "old=${e.amountMinor} ${t.date} cat=${e.categoryId} note=${t.note}; new=$signed $date cat=$categoryId" + if (inInventory) "; يمسّ جرداً معتمداً" else "")
         dao.updateEntries(listOf(e.copy(amountMinor = signed, date = date.toString(), categoryId = categoryId)))
-        dao.updateTxn(t.copy(date = date.toString(), note = note.trim(), party = party.trim(), updatedAtUtc = clock()))
+        dao.updateTxn(t.copy(date = date.toString(), note = note.trim(), party = party.trim(), updatedAtUtc = clock(), memberId = memberId))
     }
 
     // ---------------- الأسعار ----------------
@@ -360,6 +361,27 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         }
     }
 
+    // ---------------- البيت: الأفراد والميزانيات والمتكررات ----------------
+    suspend fun saveMember(m: MemberEntity) = write { require(m.name.isNotBlank()) { "الاسم مطلوب" }; dao.upsertMember(m.copy(name = m.name.trim())) }
+    suspend fun saveBudget(categoryId: String, currency: CurrencyDef, limitMinor: Long) = write {
+        if (limitMinor <= 0) throw LedgerException("حد الميزانية يجب أن يكون أكبر من صفر")
+        val existing = dao.budgets().firstOrNull { it.categoryId == categoryId && it.currency == currency.code }
+        dao.upsertBudget(BudgetEntity(existing?.id ?: uuid(), categoryId, currency.code, limitMinor))
+    }
+    suspend fun deleteBudget(b: BudgetEntity) = write { dao.deleteBudget(b) }
+    suspend fun saveRecurring(r: RecurringEntity) = write {
+        if (r.name.isBlank()) throw LedgerException("الاسم مطلوب")
+        if (r.amountMinor <= 0) throw LedgerException("المبلغ يجب أن يكون أكبر من صفر")
+        if (r.dayOfMonth !in 1..31) throw LedgerException("اليوم بين 1 و31")
+        dao.upsertRecurring(r)
+    }
+    suspend fun deleteRecurring(r: RecurringEntity) = write { dao.deleteRecurring(r) }
+
+    /** يسجّل متكرراً مستحقاً لشهر محدد بلمسة تأكيد. معرّف الطلب «rec:id:yyyy-MM» يمنع تسجيله مرتين. */
+    suspend fun recordRecurring(r: RecurringEntity, month: java.time.YearMonth, amountMinor: Long = r.amountMinor, date: LocalDate? = null): String =
+        addIncomeExpense(r.kind == "INCOME", r.accountId, amountMinor, r.categoryId, date ?: month.atDay(minOf(r.dayOfMonth, month.lengthOfMonth())), r.name, "",
+            app.rasidi.core.household.Household.requestId(r, month), r.memberId)
+
     // ---------------- استيراد CSV ----------------
     data class ImportResult(val imported: Int, val alreadyImported: Int, val failed: List<String>, val possibleDuplicates: List<String>)
 
@@ -405,14 +427,17 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
     // ---------------- الاستعادة ----------------
     /** يستبدل الدفتر كاملاً بلقطة في معاملة واحدة: إما السجل السابق كاملاً أو الجديد كاملاً. */
     suspend fun replaceAll(s: Snapshot) = write {
+        dao.clearRecurring(); dao.clearBudgets()
         dao.clearZakatPayments(); dao.clearZakatEstimates(); dao.clearInventoryLines(); dao.clearInventories()
         dao.clearDebtPayments(); dao.clearInstallments(); dao.clearGoldMoves(); dao.clearEntries(); dao.clearTxns()
-        dao.clearDebts(); dao.clearGoldHoldings(); dao.clearRates(); dao.clearCategories(); dao.clearAccounts(); dao.clearSettings(); dao.clearAudit()
+        dao.clearDebts(); dao.clearGoldHoldings(); dao.clearRates(); dao.clearCategories(); dao.clearAccounts(); dao.clearSettings(); dao.clearAudit(); dao.clearMembers()
+        dao.insertMembers(s.members)
         dao.insertAccounts(s.accounts); dao.insertCategories(s.categories); dao.insertTxns(s.txns); dao.insertEntries(s.entries)
         dao.insertDebts(s.debts); dao.insertInstallments(s.installments); dao.insertDebtPayments(s.debtPayments)
         dao.insertGoldHoldings(s.goldHoldings); dao.insertGoldMoves(s.goldMoves); dao.insertRates(s.rates)
         dao.insertInventories(s.inventories); dao.insertInventoryLines(s.inventoryLines); dao.insertZakatEstimates(s.zakatEstimates); dao.insertZakatPayments(s.zakatPayments)
         dao.insertSettings(s.settings); dao.insertAudits(s.audit)
+        dao.insertBudgets(s.budgets); dao.insertRecurring(s.recurring)
         db.jobs().clear()
     }
 }

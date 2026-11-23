@@ -50,7 +50,7 @@ class BackupTest {
         val s = String(file, Charsets.ISO_8859_1).replaceFirst("\"format\":1", "\"format\":9")
         val e = runCatching { BackupFormat.decrypt(s.toByteArray(Charsets.ISO_8859_1), code) }.exceptionOrNull() as BackupFormat.BackupException
         assertEquals(BackupFormat.Reason.NEWER_FORMAT, e.reason)
-        val s2 = String(file, Charsets.ISO_8859_1).replaceFirst("\"dataVersion\":1", "\"dataVersion\":7")
+        val s2 = String(file, Charsets.ISO_8859_1).replaceFirst("\"dataVersion\":${BackupFormat.DATA_VERSION}", "\"dataVersion\":9")
         val e2 = runCatching { BackupFormat.readHeader(s2.toByteArray(Charsets.ISO_8859_1)) }.exceptionOrNull() as BackupFormat.BackupException
         assertEquals(BackupFormat.Reason.NEWER_DATA, e2.reason)
     }

@@ -60,6 +60,7 @@ fun IncomeExpenseForm(vm: MainViewModel, nav: NavController, income: Boolean, ed
     var date by remember { mutableStateOf(editTxn?.date?.let(LocalDate::parse) ?: vm.today()) }
     var note by rememberSaveable { mutableStateOf(editTxn?.note ?: "") }
     var party by rememberSaveable { mutableStateOf(editTxn?.party ?: "") }
+    var member by rememberSaveable { mutableStateOf(editTxn?.memberId ?: p.getString("lastMember", null)?.takeIf { id -> view.s.members.any { it.id == id } }) }
     val requestId = rememberSaveable { vm.newRequestId() }
     var saving by remember { mutableStateOf(false) }
     val acc = view.accounts.firstOrNull { it.id == accountId }
@@ -70,6 +71,10 @@ fun IncomeExpenseForm(vm: MainViewModel, nav: NavController, income: Boolean, ed
         Text("الفئة", style = MaterialTheme.typography.titleSmall, color = LocalR.current.mute, modifier = Modifier.padding(top = Sp.sm, bottom = 4.dp))
         ChipRow(cats.map { it.id }, categoryId, { id -> cats.first { it.id == id }.name }, { categoryId = it })
         Spacer(Modifier.height(Sp.sm))
+        if (view.s.members.any { !it.archived }) {
+            Text("مَن؟ (اختياري)", style = MaterialTheme.typography.titleSmall, color = LocalR.current.mute, modifier = Modifier.padding(top = Sp.sm, bottom = 4.dp))
+            ChipRow(listOf<String?>(null) + view.s.members.filter { !it.archived }.map { it.id }, member, { id -> id?.let { i -> view.s.members.first { it.id == i }.name } ?: "مشترك" }, { member = it })
+        }
         DateField(date, { date = it })
         Spacer(Modifier.height(Sp.sm))
         TextIn(note, { note = it }, "ملاحظة (اختياري)")
@@ -79,9 +84,9 @@ fun IncomeExpenseForm(vm: MainViewModel, nav: NavController, income: Boolean, ed
         val m = amount.parse(acc?.currency)
         PrimaryButton(if (editing) "احفظ التعديل" else "احفظ", enabled = !saving && m != null && m.minor > 0 && acc != null && categoryId != null && !amount.needsConfirm, icon = Icons.Filled.Check, modifier = Modifier.fillMaxWidth(), onClick = {
             saving = true
-            p.edit().putString(if (income) "lastIncomeAccount" else "lastExpenseAccount", accountId).putString(if (income) "lastIncomeCategory" else "lastExpenseCategory", categoryId).apply()
-            if (editing) vm.launchSafe("تم حفظ التعديل وتسجيله في سجل التعديلات") { vm.repo.editSimple(editTxnId, m!!.minor, categoryId, date, note, party); nav.popBackStack() }
-            else vm.launchSafe("تم الحفظ", undoable = true) { vm.repo.addIncomeExpense(income, acc!!.id, m!!.minor, categoryId, date, note, party, requestId).also { nav.popBackStack() } }
+            p.edit().putString("lastMember", member).putString(if (income) "lastIncomeAccount" else "lastExpenseAccount", accountId).putString(if (income) "lastIncomeCategory" else "lastExpenseCategory", categoryId).apply()
+            if (editing) vm.launchSafe("تم حفظ التعديل وتسجيله في سجل التعديلات") { vm.repo.editSimple(editTxnId, m!!.minor, categoryId, date, note, party, member); nav.popBackStack() }
+            else vm.launchSafe("تم الحفظ", undoable = true) { vm.repo.addIncomeExpense(income, acc!!.id, m!!.minor, categoryId, date, note, party, requestId, member).also { nav.popBackStack() } }
         })
         if (editing && editEntry != null && m != null) Text("الأثر: ${Fmt.money(editEntry.amount)} ← ${Fmt.money(if (income) m else -m)}", color = LocalR.current.mute, modifier = Modifier.padding(top = 8.dp))
     }

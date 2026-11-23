@@ -29,7 +29,8 @@ import app.rasidi.ui.theme.LocalR
 import app.rasidi.ui.theme.Sp
 
 object Routes {
-    const val HOME = "home"; const val TXNS = "txns"; const val DEBTS = "debts"; const val MORE = "more"
+    const val HOME = "home"; const val TXNS = "txns"; const val CALC = "calc"; const val DEBTS = "debts"; const val MORE = "more"
+    const val MEMBERS = "members"; const val BUDGETS = "budgets"; const val RECURRING = "recurring"
     const val ONBOARD = "onboard"
     const val ADD = "add/{type}?ref={ref}"; fun add(type: String, ref: String = "") = "add/$type?ref=$ref"
     const val TXN = "txn/{id}"; fun txn(id: String) = "txn/$id"
@@ -44,6 +45,7 @@ private data class Tab(val route: String, val label: String, val icon: ImageVect
 private val tabs = listOf(
     Tab(Routes.HOME, "الرئيسية", Icons.Filled.Home),
     Tab(Routes.TXNS, "الحركات", Icons.Filled.ReceiptLong),
+    Tab(Routes.CALC, "الحاسبة", Icons.Filled.Calculate),
     Tab(Routes.DEBTS, "الديون", Icons.Filled.Handshake),
     Tab(Routes.MORE, "المزيد", Icons.Filled.GridView),
 )
@@ -67,8 +69,16 @@ fun RasidiRoot(vm: MainViewModel, startOverride: String? = null) {
     val route = back?.destination?.route
     val showBar = route in tabs.map { it.route }
 
+    val status by vm.status.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
     Box(Modifier.fillMaxSize().background(LocalR.current.bg)) {
-        NavHost(nav, startDestination = start) {
+      Column(Modifier.fillMaxSize()) {
+        // الشريط العلوي الثابت في التبويبات الرئيسية (أسلوب طاقتي)
+        if (showBar) app.rasidi.ui.components.TabTopBar(status, onStatus = { nav.navigate(Routes.BACKUP) },
+            actionIcon = if (settings.hideAmounts) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+            actionDesc = if (settings.hideAmounts) "إظهار المبالغ" else "إخفاء المبالغ",
+            onAction = { vm.setSetting("ui.hideAmounts", if (settings.hideAmounts) "0" else "1") })
+        NavHost(nav, startDestination = start, modifier = Modifier.weight(1f)) {
             composable(Routes.ONBOARD) { OnboardingScreen(vm, nav) }
             composable(Routes.HOME) { HomeScreen(vm, nav) }
             composable(Routes.TXNS) { TransactionsScreen(vm, nav) }
@@ -87,7 +97,12 @@ fun RasidiRoot(vm: MainViewModel, startOverride: String? = null) {
             composable(Routes.BACKUP) { BackupScreen(vm, nav) }
             composable(Routes.SETTINGS) { SettingsScreen(vm, nav) }
             composable(Routes.CATEGORIES) { CategoriesScreen(vm, nav) }
+            composable(Routes.CALC) { CalculatorScreen(vm, nav) }
+            composable(Routes.MEMBERS) { MembersScreen(vm, nav) }
+            composable(Routes.BUDGETS) { BudgetsScreen(vm, nav) }
+            composable(Routes.RECURRING) { RecurringScreen(vm, nav) }
         }
+      }
         if (showBar) {
             Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = Sp.sm, vertical = 10.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {

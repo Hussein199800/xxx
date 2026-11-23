@@ -23,6 +23,20 @@ interface LedgerDao {
     @Query("SELECT * FROM zakat_payments") suspend fun zakatPayments(): List<ZakatPaymentEntity>
     @Query("SELECT * FROM settings") suspend fun settings(): List<SettingEntity>
     @Query("SELECT * FROM audit_log ORDER BY atUtc DESC") suspend fun audit(): List<AuditEntity>
+    @Query("SELECT * FROM members ORDER BY sort, name") suspend fun members(): List<MemberEntity>
+    @Query("SELECT * FROM budgets") suspend fun budgets(): List<BudgetEntity>
+    @Query("SELECT * FROM recurring ORDER BY dayOfMonth") suspend fun recurring(): List<RecurringEntity>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertMember(m: MemberEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertBudget(b: BudgetEntity)
+    @Delete suspend fun deleteBudget(b: BudgetEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertRecurring(r: RecurringEntity)
+    @Delete suspend fun deleteRecurring(r: RecurringEntity)
+    @Insert suspend fun insertMembers(l: List<MemberEntity>)
+    @Insert suspend fun insertBudgets(l: List<BudgetEntity>)
+    @Insert suspend fun insertRecurring(l: List<RecurringEntity>)
+    @Query("DELETE FROM members") suspend fun clearMembers()
+    @Query("DELETE FROM budgets") suspend fun clearBudgets()
+    @Query("DELETE FROM recurring") suspend fun clearRecurring()
 
     /** يُصدر إشارة عند أي تغيير في الجداول المالية. */
     @Query("SELECT (SELECT COUNT(*) FROM txns) + (SELECT COUNT(*) FROM entries) + (SELECT COUNT(*) FROM accounts) + (SELECT COUNT(*) FROM debts) + (SELECT COUNT(*) FROM debt_payments) + (SELECT COUNT(*) FROM rates) + (SELECT COUNT(*) FROM gold_moves) + (SELECT COUNT(*) FROM inventories) + (SELECT COUNT(*) FROM zakat_payments) + (SELECT COUNT(*) FROM audit_log) + (SELECT COUNT(*) FROM settings) + (SELECT COUNT(*) FROM categories) + (SELECT COUNT(*) FROM gold_holdings) + (SELECT COUNT(*) FROM zakat_estimates)")

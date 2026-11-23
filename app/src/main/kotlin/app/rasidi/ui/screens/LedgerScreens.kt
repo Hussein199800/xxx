@@ -9,6 +9,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import app.rasidi.core.data.*
@@ -329,8 +333,18 @@ fun SettingsScreen(vm: MainViewModel, nav: NavController) {
         RCard {
             ChipRow(listOf("system", "light", "dark"), s.theme, { when (it) { "light" -> "نهاري"; "dark" -> "ليلي"; else -> "حسب النظام" } }, { vm.setSetting("ui.theme", it) })
             Spacer(Modifier.height(Sp.xs))
-            Text("حجم النص: ${(s.fontScale * 100).toInt()}%", color = c.txt)
-            Slider(s.fontScale, { vm.setSetting("ui.fontScale", ((it * 20).toInt() / 20f).toString()) }, valueRange = 0.85f..1.4f, steps = 10)
+            Text("حجم الخط", style = MaterialTheme.typography.titleSmall, color = c.txt)
+            // خيارات منفصلة مع معاينة «أ» كما في طاقتي
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(0.85f to "أصغر", 0.92f to "صغير", 1f to "عادي", 1.12f to "كبير", 1.25f to "أكبر").forEach { (v, l) ->
+                    val on = kotlin.math.abs(s.fontScale - v) < 0.01f
+                    Column(Modifier.weight(1f).clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).background(if (on) c.priSoft else c.soft)
+                        .clickable { vm.setSetting("ui.fontScale", v.toString()) }.heightIn(min = 64.dp).padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Text("أ", fontSize = (15 * v).sp, color = if (on) c.pri else c.txt, style = MaterialTheme.typography.titleMedium)
+                        Text(l, style = MaterialTheme.typography.labelSmall, color = if (on) c.pri else c.mute)
+                    }
+                }
+            }
         }
         SectionHeader("الخصوصية والأمان")
         RCard {

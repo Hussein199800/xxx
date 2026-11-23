@@ -2,7 +2,10 @@ package app.rasidi.core.backup
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -34,7 +37,7 @@ object BackupFormat {
     val MAGIC = byteArrayOf('R'.code.toByte(), 'A'.code.toByte(), 'S'.code.toByte(), 'I'.code.toByte(), 'D'.code.toByte(), 'I'.code.toByte(), 0, 1)
     const val FORMAT_VERSION = 1
     /** إصدار بيانات اللقطة (يتبع مخطط Room). */
-    const val DATA_VERSION = 1
+    const val DATA_VERSION = 2
     const val MAX_FILE_BYTES = 64L * 1024 * 1024
     private const val MAX_HEADER = 16 * 1024
     private val rnd = SecureRandom()
@@ -153,7 +156,13 @@ object BackupFormat {
 /** ترحيل لقطات الإصدارات القديمة إلى [BackupFormat.DATA_VERSION]. كل خطوة لها اختبار. */
 object BackupMigrations {
     private val steps: Map<Int, (JsonObject) -> JsonObject> = mapOf(
-        // 1 → 2: يُضاف هنا عند أول تغيير في المخطط.
+        // 1 → 2: أفراد البيت والميزانيات والمتكررات (جداول جديدة فارغة) و memberId للحركات (null).
+        1 to { o ->
+            val snap = o["snapshot"]!!.jsonObject
+            val txns = snap["txns"]!!.jsonArray.map { t -> JsonObject(t.jsonObject + ("memberId" to JsonNull)) }
+            val newSnap = JsonObject(snap + mapOf("txns" to JsonArray(txns), "members" to JsonArray(emptyList()), "budgets" to JsonArray(emptyList()), "recurring" to JsonArray(emptyList())))
+            JsonObject(o + ("snapshot" to newSnap))
+        },
     )
 
     fun upgrade(fromVersion: Int, payloadJson: String): String {

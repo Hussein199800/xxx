@@ -24,6 +24,10 @@ data class Snapshot(
     val zakatPayments: List<ZakatPaymentEntity> = emptyList(),
     val settings: List<SettingEntity> = emptyList(),
     val audit: List<AuditEntity> = emptyList(),
+    // الإصدار 2
+    val members: List<MemberEntity> = emptyList(),
+    val budgets: List<BudgetEntity> = emptyList(),
+    val recurring: List<RecurringEntity> = emptyList(),
 ) {
     fun counts(): Map<String, Int> = linkedMapOf(
         "accounts" to accounts.size, "categories" to categories.size, "txns" to txns.size, "entries" to entries.size,
@@ -32,6 +36,7 @@ data class Snapshot(
         "inventories" to inventories.size, "inventoryLines" to inventoryLines.size,
         "zakatEstimates" to zakatEstimates.size, "zakatPayments" to zakatPayments.size,
         "settings" to settings.size, "audit" to audit.size,
+        "members" to members.size, "budgets" to budgets.size, "recurring" to recurring.size,
     )
 
     /** نسخة مرتّبة حتمياً لحساب البصمة ومقارنة المحتوى. */
@@ -41,6 +46,7 @@ data class Snapshot(
         goldHoldings.sortedBy { it.id }, goldMoves.sortedBy { it.id }, rates.sortedBy { it.id },
         inventories.sortedBy { it.id }, inventoryLines.sortedBy { it.id }, zakatEstimates.sortedBy { it.id },
         zakatPayments.sortedBy { it.id }, settings.sortedBy { it.key }, audit.sortedBy { it.id },
+        members.sortedBy { it.id }, budgets.sortedBy { it.id }, recurring.sortedBy { it.id },
     )
 
     /** بصمة محتوى اللقطة (SHA-256 بالست عشري) — مستقلة عن ترتيب الصفوف. */

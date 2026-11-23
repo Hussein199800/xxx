@@ -97,6 +97,13 @@ object ReportBuilders {
             ReportTable("صافي التدفق حسب العملة", "صافي التدفق", listOf(Column("العملة", ColType.TEXT), Column("الدخل", ColType.NUMBER), Column("المصروف", ColType.NUMBER), Column("الصافي", ColType.NUMBER), Column("ديون سُدّدت/حُصّلت", ColType.NUMBER), Column("الرمز", ColType.CODE)), flowRows, keepInSummary = true),
             ReportTable("المصروف حسب الفئة", "حسب الفئة", listOf(Column("الفئة", ColType.TEXT, 1.5f), Column("المبلغ", ColType.NUMBER), Column("العملة", ColType.CODE)), catRows, keepInSummary = true),
         )
+        // المصروف حسب فرد البيت (إن وُجد أفراد)
+        if (v.s.members.isNotEmpty()) {
+            val byMember = app.rasidi.core.household.Household.spendByMember(v, from, to).flatMap { m ->
+                m.byCurrency.values.map { listOf(Cell.Text(if (p.hideNames && m.memberId != null) "فرد" else m.name), money(it), Cell.Text(it.currency.code)) }
+            }
+            tables += ReportTable("المصروف حسب الفرد", "حسب الفرد", listOf(Column("الفرد", ColType.TEXT, 1.5f), Column("المبلغ", ColType.NUMBER), Column("العملة", ColType.CODE)), byMember, keepInSummary = true)
+        }
         if (detailed) tables += ReportTable("تفاصيل الحركات", "التفاصيل", listOf(Column("التاريخ", ColType.DATE), Column("النوع", ColType.TEXT, 0.8f), Column("الحساب", ColType.TEXT, 0.9f), Column("الفئة", ColType.TEXT, 0.8f), Column("البيان", ColType.TEXT, 1.6f), Column("الطرف", ColType.TEXT, 0.8f), Column("المبلغ", ColType.NUMBER), Column("العملة", ColType.CODE)), detail)
         return ReportDoc(
             ReportDoc.Kind.REPORT, "تقرير $label", period(from, to), generatedAt,

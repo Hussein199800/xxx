@@ -78,13 +78,8 @@ fun HomeScreen(vm: MainViewModel, nav: NavController) {
     val demo by vm.demo.collectAsStateWithLifecycle()
     var explain by remember { mutableStateOf(false) }
     val h = home ?: return
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(horizontal = Sp.md).padding(bottom = 170.dp)) {
-        Row(Modifier.fillMaxWidth().padding(top = Sp.xs), verticalAlignment = Alignment.CenterVertically) {
-            Text("رصيدي", style = MaterialTheme.typography.titleMedium, color = c.pri, modifier = Modifier.weight(1f))
-            if (demo) StatusChip("دفتر تجريبي", Tone.GOLD)
-            IconButton(onClick = { nav.navigate(Routes.SETTINGS) }, modifier = Modifier.size(48.dp)) { Icon(Icons.Filled.Settings, "الإعدادات", tint = c.mute) }
-        }
-        BigTitle("أموالي اليوم", sub = ReportDate.ar(vm.today()))
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Sp.md).padding(bottom = 170.dp)) {
+        BigTitle("الرئيسية", sub = "أموالي اليوم · ${ReportDate.ar(vm.today())}")
         if (vm.device.driveRelinkNeeded) {
             RCard(tint = c.warnSoft, onClick = { nav.navigate(Routes.BACKUP) }) {
                 Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.CloudOff, null, tint = c.warn); Spacer(Modifier.width(8.dp)); Text("أعد ربط Google لاستئناف النسخ التلقائي", color = c.warn, style = MaterialTheme.typography.titleSmall) }
@@ -135,6 +130,21 @@ fun HomeScreen(vm: MainViewModel, nav: NavController) {
                 }
             }
         }
+        // الفواتير المستحقة والميزانية هذا الشهر
+        val view = vm.view.collectAsStateWithLifecycle().value
+        if (view != null) {
+            val month = java.time.YearMonth.now()
+            val pending = remember(view) { app.rasidi.core.household.Household.recurringDue(view, month).filter { !it.done } }
+            val budgets = remember(view) { app.rasidi.core.household.Household.budgets(view, month) }
+            if (pending.isNotEmpty()) { Spacer(Modifier.height(Sp.sm)); RecurringDueCard(vm, pending.take(4), month) { nav.navigate(Routes.RECURRING) } }
+            if (budgets.isNotEmpty()) {
+                Spacer(Modifier.height(Sp.sm))
+                RCard(onClick = { nav.navigate(Routes.BUDGETS) }) {
+                    Text("الميزانية هذا الشهر", style = MaterialTheme.typography.titleMedium)
+                    budgets.take(3).forEach { BudgetRow(it) }
+                }
+            }
+        }
         SectionHeader("آخر الحركات", "الكل") { nav.navigate(Routes.TXNS) }
         if (h.recent.isEmpty()) EmptyState(Icons.Filled.ReceiptLong, "لا حركات بعد", "سجّل أول مصروف من زر الإضافة", "سجّل مصروفاً") { nav.navigate(Routes.add("expense")) }
         else RCard { h.recent.forEach { TxnRowItem(it) { nav.navigate(Routes.txn(it.id)) } } }
@@ -157,6 +167,7 @@ fun TransactionsScreen(vm: MainViewModel, nav: NavController) {
     var account by remember { mutableStateOf<String?>(null) }
     var category by remember { mutableStateOf<String?>(null) }
     var currency by remember { mutableStateOf<String?>(null) }
+    var member by remember { mutableStateOf<String?>(null) }
     var limit by remember { mutableIntStateOf(200) }
     val today = vm.today()
     val (from, to) = when (period) {
@@ -165,7 +176,7 @@ fun TransactionsScreen(vm: MainViewModel, nav: NavController) {
         PeriodF.YEAR -> today.withDayOfYear(1) to today.withDayOfYear(today.lengthOfYear())
         PeriodF.ALL -> LocalDate.of(1900, 1, 1) to LocalDate.of(2999, 1, 1)
     }
-    val filtered = remember(view, q, period, type, account, category, currency) {
+    val filtered = remember(view, q, period, type, account, category, currency, member) {
         val byTxn = view.entries.groupBy { it.txnId }
         view.s.txns.filter { t ->
             val d = LocalDate.parse(t.date)
@@ -175,13 +186,14 @@ fun TransactionsScreen(vm: MainViewModel, nav: NavController) {
                 (account == null || es.any { it.accountId == account }) &&
                 (category == null || es.any { it.categoryId == category }) &&
                 (currency == null || es.any { it.amount.currency.code == currency }) &&
+                (member == null || t.memberId == member) &&
                 (q.isBlank() || t.note.contains(q, true) || t.party.contains(q, true) || es.any { e -> view.categoryNames[e.categoryId]?.contains(q, true) == true })
         }.sortedWith(compareByDescending<app.rasidi.core.data.TxnEntity> { it.date }.thenByDescending { it.createdAtUtc })
     }
     // ملخص يطابق الفلاتر: دخل ومصروف بالعملات الأصلية
     val ids = filtered.map { it.id }.toSet()
     val totals = remember(filtered, account, currency) { PeriodTotals.of(view.entries.filter { it.txnId in ids && (account == null || it.accountId == account) && (currency == null || it.amount.currency.code == currency) }, LocalDate.of(1900, 1, 1), LocalDate.of(2999, 1, 1)) }
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(start = Sp.md, end = Sp.md, bottom = 170.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = Sp.md, end = Sp.md, bottom = 170.dp)) {
         item { BigTitle("الحركات") }
         item {
             OutlinedTextField(q, { q = it }, placeholder = { Text("ابحث في البيان أو الطرف أو الفئة") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true,
@@ -196,6 +208,7 @@ fun TransactionsScreen(vm: MainViewModel, nav: NavController) {
             ChipRow(listOf<String?>(null) + view.s.categories.filter { !it.archived }.map { it.id }, category, { id -> id?.let { view.categoryNames[it] } ?: "كل الفئات" }, { category = it })
             Spacer(Modifier.height(6.dp))
             ChipRow(listOf<String?>(null) + view.accounts.map { it.currency.code }.distinct(), currency, { it ?: "كل العملات" }, { currency = it })
+            if (view.s.members.isNotEmpty()) { Spacer(Modifier.height(6.dp)); ChipRow(listOf<String?>(null) + view.s.members.map { it.id }, member, { id -> id?.let { i -> view.s.members.first { it.id == i }.name } ?: "كل الأفراد" }, { member = it }) }
         }
         item {
             RCard(Modifier.padding(vertical = Sp.sm)) {
@@ -229,7 +242,7 @@ fun DebtsScreen(vm: MainViewModel, nav: NavController) {
     var dir by remember { mutableStateOf(DebtDirection.OWED_TO_ME) }
     var showSettled by remember { mutableStateOf(false) }
     val list = rows.filter { it.debt.direction == dir && !it.archived && (showSettled || it.status != DebtStatus.SETTLED) }.sortedWith(compareBy({ it.status == DebtStatus.SETTLED }, { it.nextDue ?: LocalDate.MAX }))
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(horizontal = Sp.md).padding(bottom = 170.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Sp.md).padding(bottom = 170.dp)) {
         BigTitle("الديون")
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             SegmentedButton(dir == DebtDirection.OWED_TO_ME, { dir = DebtDirection.OWED_TO_ME }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("لي عند الناس") }
@@ -269,34 +282,3 @@ fun DebtsScreen(vm: MainViewModel, nav: NavController) {
     }
 }
 
-@Composable
-fun MoreScreen(vm: MainViewModel, nav: NavController) {
-    val c = LocalR.current
-    val items: List<Triple<String, ImageVector, Pair<String, String>>> = listOf(
-        Triple(Routes.ACCOUNTS, Icons.Filled.AccountBalanceWallet, "الحسابات" to "المحافظ وكشوف الحساب"),
-        Triple(Routes.GOLD, Icons.Filled.Diamond, "الذهب" to "القطع والوزن الخالص"),
-        Triple(Routes.reports(), Icons.Filled.Description, "التقارير والتصدير" to "Excel وWord وPDF"),
-        Triple(Routes.INVENTORY, Icons.Filled.Inventory2, "الجرد والزكاة" to "صافي الأموال بالدولار"),
-        Triple(Routes.RATES, Icons.Filled.CurrencyExchange, "الأسعار" to "العملات وغرام الذهب"),
-        Triple(Routes.BACKUP, Icons.Filled.CloudUpload, "النسخ الاحتياطي" to "ملف مشفّر وGoogle Drive"),
-        Triple(Routes.CATEGORIES, Icons.Filled.Category, "الفئات" to "إضافة وأرشفة"),
-        Triple(Routes.SETTINGS, Icons.Filled.Settings, "الإعدادات" to "المظهر والقفل والخصوصية"),
-    )
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(horizontal = Sp.md).padding(bottom = 170.dp)) {
-        BigTitle("المزيد")
-        items.chunked(2).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(Sp.sm), modifier = Modifier.padding(bottom = Sp.sm)) {
-                row.forEach { (route, icon, t) ->
-                    val tint = if (route == Routes.GOLD || route == Routes.INVENTORY) c.gold else c.pri
-                    RCard(Modifier.weight(1f).heightIn(min = 128.dp), onClick = { nav.navigate(route) }) {
-                        IconBadge(icon, tint)
-                        Spacer(Modifier.height(Sp.xs))
-                        Text(t.first, style = MaterialTheme.typography.titleMedium, color = c.txt)
-                        Text(t.second, style = MaterialTheme.typography.bodySmall, color = c.mute)
-                    }
-                }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
-            }
-        }
-    }
-}

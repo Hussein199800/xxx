@@ -47,8 +47,10 @@ data class Rate(
     /** دولار لكل وحدة، للعرض فقط. */
     val usdPerUnit: BigDecimal get() = toUsd(BigDecimal.ONE)
 
-    /** نص مقروء مثل «1 USD = 40 TRY». */
-    fun label(): String = when (direction) {
+    /** نص مقروء مثل «1 USD = 40 TRY»، معزول الاتجاه (LRI…PDI) حتى لا ينقلب داخل سطر عربي. */
+    fun label(): String = Fmt.LRI + rawLabel() + Fmt.PDI
+
+    fun rawLabel(): String = when (direction) {
         RateDirection.UNITS_PER_USD -> "1 USD = ${Fmt.plain(entered)} ${unitLabel(unit)}"
         RateDirection.USD_PER_UNIT -> "1 ${unitLabel(unit)} = ${Fmt.plain(entered)} USD"
     }

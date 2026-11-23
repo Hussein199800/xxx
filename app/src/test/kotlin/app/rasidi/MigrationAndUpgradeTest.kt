@@ -5,6 +5,7 @@ import app.rasidi.core.money.Currencies
 import app.rasidi.data.RasidiDatabase
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -37,8 +38,11 @@ class MigrationAndUpgradeTest {
             assertEquals("جدول $name", norm(sql), norm(actual[name] ?: "missing"))
         }
         db.close()
-        // كل ترحيل جديد يُضاف إلى RasidiDatabase.MIGRATIONS ويُختبر هنا قبل رفع الإصدار
-        assertEquals(0, RasidiDatabase.MIGRATIONS.size)
+        // سلسلة الترحيلات تغطي كل خطوة من 1 إلى الإصدار الحالي دون فجوات (وإلا فشل الفتح بدل مسح البيانات)
+        val steps = RasidiDatabase.MIGRATIONS.map { it.startVersion to it.endVersion }.sortedBy { it.first }
+        assertEquals((1 until RasidiDatabase.VERSION).map { it to it + 1 }, steps)
+        // ولكل إصدار مخطط مصدَّر محفوظ في المستودع
+        (1..RasidiDatabase.VERSION).forEach { assertTrue("مخطط $it", java.io.File(dir, "$it.json").exists()) }
     }
 
     @Test fun reopenUsedDatabaseKeepsData() = runBlocking {

@@ -9,6 +9,8 @@ import app.rasidi.core.data.*
 import app.rasidi.core.ledger.*
 import app.rasidi.core.money.*
 import app.rasidi.data.LedgerException
+import app.rasidi.ui.components.LedgerStatus
+import app.rasidi.ui.components.Tone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -55,6 +57,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _demo = MutableStateFlow(container.demo)
     val demo: StateFlow<Boolean> = _demo
 
+    private val _status = MutableStateFlow(LedgerStatus("دفتري", "", Tone.INFO))
+    /** حالة الدفتر للشريط العلوي: النسخة الاحتياطية أو الوضع التجريبي. */
+    val status: StateFlow<LedgerStatus> = _status
+
+    fun refreshStatus() {
+        val d = device
+        if (container.demo) { _status.value = LedgerStatus("دفتر تجريبي", "بيانات اصطناعية منفصلة", Tone.GOLD); return }
+        val last = maxOf(d.lastVerifiedAt, d.lastLocalBackupAt)
+        val days = if (last > 0) ((System.currentTimeMillis() - last) / 86_400_000L) else -1
+        _status.value = when {
+            d.driveRelinkNeeded -> LedgerStatus("دفتري", "أعد ربط Google", Tone.DANGER)
+            last <= 0 -> LedgerStatus("دفتري", "لا نسخة احتياطية بعد", Tone.WARN)
+            days == 0L -> LedgerStatus("دفتري", "نُسخ اليوم" + if (d.lastVerifiedAt == last) " · Drive" else " · ملف", Tone.OK)
+            days <= 7 -> LedgerStatus("دفتري", "آخر نسخة منذ $days يوم", Tone.OK)
+            else -> LedgerStatus("دفتري", "آخر نسخة منذ $days يوماً", Tone.WARN)
+        }
+    }
+
     data class UiMessage(val text: String, val undoTxnId: String? = null)
 
     /** اليوم بتوقيت الدفتر المحلي. */
@@ -76,6 +96,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val v = withContext(Dispatchers.IO) { repo.view() }
         val derived = withContext(Dispatchers.Default) { derive(v) }
         _view.value = v; _home.value = derived.first; _debts.value = derived.second
+        refreshStatus()
         _ready.value = true
     }
 

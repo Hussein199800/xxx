@@ -59,6 +59,14 @@ object SnapshotValidator {
         s.inventoryLines.forEach { if (it.inventoryId !in inv) p += "سطر جرد بلا جرد"; dec("inventoryLine", it.usd) }
         s.zakatEstimates.forEach { if (it.inventoryId !in inv) p += "زكاة بلا جرد" }
         s.zakatPayments.forEach { if (it.estimateId !in est) p += "دفعة زكاة بلا تقدير"; if (it.txnId !in txn) p += "دفعة زكاة بلا حركة"; cur("zakatPayment", it.currency) }
+        val members = s.members.map { it.id }.toSet()
+        uniq("members", s.members) { it.id }; uniq("budgets", s.budgets) { it.id }; uniq("recurring", s.recurring) { it.id }
+        s.txns.forEach { if (it.memberId != null && it.memberId !in members) p += "حركة تشير لفرد مفقود" }
+        s.budgets.forEach { if (it.categoryId !in cat) p += "ميزانية بفئة مفقودة"; cur("budget", it.currency); amt("budget", it.limitMinor) }
+        s.recurring.forEach { r ->
+            if (r.accountId !in acc) p += "متكرر بحساب مفقود"; if (r.categoryId !in cat) p += "متكرر بفئة مفقودة"
+            if (r.dayOfMonth !in 1..31) p += "يوم متكرر غير صالح"; if (r.memberId != null && r.memberId !in members) p += "متكرر بفرد مفقود"
+        }
         s.settings.forEach { if (it.key !in Snapshot.BACKUP_SETTING_KEYS) p += "إعداد غير مسموح في النسخة: ${it.key}" }
         return p.distinct()
     }

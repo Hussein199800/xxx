@@ -38,7 +38,8 @@ object DemoData {
         var n = 0
         fun tx(type: String, date: LocalDate, note: String, vararg es: Triple<String, String, Long>, cat: String? = null, party: String = "", debtId: String? = null, fx: String? = null): String {
             val id = "tx-${++n}"
-            txns += TxnEntity(id, type, date.toString(), note, party, "req-$id", debtId = debtId, fxRate = fx, createdAtUtc = 1_700_000_000_000 + n)
+            val member = when { note.contains("سوق") -> "mem-2"; note.contains("مواصلات") -> "mem-3"; note.contains("راتب") -> "mem-1"; else -> null }
+            txns += TxnEntity(id, type, date.toString(), note, party, "req-$id", debtId = debtId, fxRate = fx, createdAtUtc = 1_700_000_000_000 + n, memberId = member)
             es.forEachIndexed { i, (acc, kind, minor) ->
                 entries += EntryEntity("$id-e$i", id, acc, kind, minor, accounts.first { it.id == acc }.currency, date.toString(), if (kind in setOf("INCOME", "EXPENSE", "FEE", "ZAKAT")) cat ?: if (kind == "FEE") "cat-fees" else null else null)
             }
@@ -98,6 +99,17 @@ object DemoData {
             debts = debts, installments = inst, debtPayments = payments,
             goldHoldings = gold, goldMoves = goldMoves, rates = rates,
             settings = listOf(SettingEntity("ui.theme", "system")),
+            members = listOf(MemberEntity("mem-1", "أبو محمد", sort = 1), MemberEntity("mem-2", "أم محمد", sort = 2), MemberEntity("mem-3", "محمد", sort = 3)),
+            budgets = listOf(
+                BudgetEntity("bud-food", "cat-food", "TRY", 400_000),
+                BudgetEntity("bud-bills", "cat-bills", "TRY", 100_000),
+                BudgetEntity("bud-transport", "cat-transport", "SYP", 20_000),
+            ),
+            recurring = listOf(
+                RecurringEntity("rec-rent", "إيجار البيت", "EXPENSE", "acc-try", "cat-home", 1_200_000, 3),
+                RecurringEntity("rec-net", "الإنترنت", "EXPENSE", "acc-try", "cat-bills", 60_000, 13),
+                RecurringEntity("rec-salary", "الراتب", "INCOME", "acc-usd", "cat-salary", 90_000, 1, "mem-1"),
+            ),
         )
     }
 }

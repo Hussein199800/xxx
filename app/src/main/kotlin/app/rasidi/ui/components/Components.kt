@@ -104,16 +104,14 @@ fun IconBadge(icon: ImageVector, tint: Color, size: Dp = 44.dp) {
     }
 }
 
+/** صفحة فرعية بأسلوب طاقتي: الشريط العلوي يحمل العنوان (بلا عنوان كبير مكرر). */
 @Composable
 fun ScreenScaffold(title: String, onBack: (() -> Unit)?, actions: @Composable RowScope.() -> Unit = {}, sub: String? = null, content: @Composable ColumnScope.() -> Unit) {
     val c = LocalR.current
     Column(Modifier.fillMaxSize().background(c.bg)) {
-        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = Sp.xs, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (onBack != null) IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع", tint = c.txt) }
-            Spacer(Modifier.weight(1f)); actions()
-        }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Sp.md).padding(bottom = 120.dp).navigationBarsPadding()) {
-            BigTitle(title, sub = sub)
+        PageTopBar(title, onBack, actions = actions)
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Sp.md).padding(top = 4.dp, bottom = 120.dp).navigationBarsPadding()) {
+            if (sub != null) Text(sub, style = MaterialTheme.typography.bodyMedium, color = c.mute, modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp))
             content()
         }
     }

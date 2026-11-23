@@ -44,7 +44,7 @@ data class CategoryEntity(
 @Serializable
 @Entity(
     tableName = "txns",
-    indices = [Index("date"), Index(value = ["requestId"], unique = true), Index("debtId")],
+    indices = [Index("date"), Index(value = ["requestId"], unique = true), Index("debtId"), Index("memberId")],
 )
 data class TxnEntity(
     @PrimaryKey val id: String,
@@ -63,6 +63,8 @@ data class TxnEntity(
     val fxRate: String? = null,
     val createdAtUtc: Long = 0,
     val updatedAtUtc: Long = 0,
+    /** فرد البيت صاحب الحركة (اختياري). أُضيف في الإصدار 2. */
+    val memberId: String? = null,
 )
 
 @Serializable
@@ -290,4 +292,54 @@ data class AuditEntity(
     val entityId: String,
     val action: String,
     val detail: String = "",
+)
+
+/** أفراد البيت: لمعرفة من صرف ماذا. (الإصدار 2) */
+@Serializable
+@Entity(tableName = "members")
+data class MemberEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val archived: Boolean = false,
+    val sort: Int = 0,
+)
+
+/** ميزانية شهرية لفئة مصروف بعملة محددة. (الإصدار 2) */
+@Serializable
+@Entity(
+    tableName = "budgets",
+    foreignKeys = [ForeignKey(entity = CategoryEntity::class, parentColumns = ["id"], childColumns = ["categoryId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index(value = ["categoryId", "currency"], unique = true)],
+)
+data class BudgetEntity(
+    @PrimaryKey val id: String,
+    val categoryId: String,
+    val currency: String,
+    val limitMinor: Long,
+)
+
+/**
+ * دخل أو مصروف متكرر شهرياً (إيجار، إنترنت، راتب). لا يُسجَّل تلقائياً:
+ * يظهر في الرئيسية «مستحق هذا الشهر» ويُسجَّل بلمسة تأكيد بمعرّف طلب «rec:id:yyyy-MM» فلا يتكرر. (الإصدار 2)
+ */
+@Serializable
+@Entity(
+    tableName = "recurring",
+    foreignKeys = [
+        ForeignKey(entity = AccountEntity::class, parentColumns = ["id"], childColumns = ["accountId"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = CategoryEntity::class, parentColumns = ["id"], childColumns = ["categoryId"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index("accountId"), Index("categoryId")],
+)
+data class RecurringEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    /** INCOME | EXPENSE */
+    val kind: String,
+    val accountId: String,
+    val categoryId: String,
+    val amountMinor: Long,
+    val dayOfMonth: Int,
+    val memberId: String? = null,
+    val active: Boolean = true,
 )
