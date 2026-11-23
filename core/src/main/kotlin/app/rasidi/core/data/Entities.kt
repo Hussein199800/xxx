@@ -222,6 +222,9 @@ data class InventoryLineEntity(
     val rateSource: String? = null,
     val rateDate: String? = null,
     val note: String? = null,
+    /** السعر المثبّت كما أُدخل (قيمة واتجاه ووحدة) حتى يُعاد بناء الجرد دون الرجوع لجدول الأسعار. */
+    val rateEntered: String? = null,
+    val rateDirection: String? = null,
 )
 
 @Serializable

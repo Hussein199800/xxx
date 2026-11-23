@@ -1,4 +1,6 @@
 package app.rasidi.core
+import app.rasidi.core.data.inventoryItems
+import app.rasidi.core.data.netWorth
 
 import app.rasidi.core.ledger.*
 import app.rasidi.core.money.*
@@ -71,5 +73,18 @@ class LedgerTest {
         )
         assertEquals(0, GoldCalc.grams(h, moves).compareTo(BigDecimal(80)))
         assertEquals(0, GoldCalc.grams(h, moves, d).compareTo(BigDecimal(50)))
+    }
+}
+
+class LedgerViewTest {
+    @org.junit.Test fun inventoryItemsFromDemo() {
+        val v = app.rasidi.core.data.LedgerView(app.rasidi.core.demo.DemoData.snapshot())
+        val items = v.inventoryItems(java.time.LocalDate.of(2026, 11, 20))
+        org.junit.Assert.assertTrue(items.any { it.kind == app.rasidi.core.valuation.LineKind.GOLD })
+        org.junit.Assert.assertTrue(items.any { it.kind == app.rasidi.core.valuation.LineKind.PAYABLE })
+        val debt3 = items.first { it.id == "debt:debt-3" }
+        org.junit.Assert.assertEquals(0, debt3.quantity.compareTo(java.math.BigDecimal(100)))
+        val nw = v.netWorth(java.time.LocalDate.of(2026, 11, 20))
+        org.junit.Assert.assertTrue(nw.inventory.isComplete)
     }
 }
