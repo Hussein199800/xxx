@@ -30,6 +30,7 @@ fun ReportsScreen(vm: MainViewModel, nav: NavController, kindArg: String, ref: S
     var account by rememberSaveable { mutableStateOf(ref.ifBlank { view.accounts.firstOrNull()?.id }) }
     var detailed by rememberSaveable { mutableStateOf(true) }
     var hideNames by remember { mutableStateOf(false) }; var hideNotes by remember { mutableStateOf(false) }
+    var explain by remember { mutableStateOf(false) }
     val (f, t) = when (kind) {
         ReportKind.DAY -> anchor to anchor
         ReportKind.MONTH -> anchor.withDayOfMonth(1) to anchor.withDayOfMonth(anchor.lengthOfMonth())
@@ -56,6 +57,7 @@ fun ReportsScreen(vm: MainViewModel, nav: NavController, kindArg: String, ref: S
                 Text(d.title, style = MaterialTheme.typography.titleLarge, color = c.pri)
                 Text(d.period, color = c.mute)
                 d.summary.forEach { (k, v) -> KeyValue(k, v.display()) }
+                HowLink { explain = true }
                 d.tables.filter { it.keepInSummary }.forEach { tb ->
                     Text(tb.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = Sp.xs))
                     tb.rows.forEach { r -> KeyValue(r.first().display(), r.drop(1).joinToString("  ") { it.display() }) }
@@ -64,6 +66,19 @@ fun ReportsScreen(vm: MainViewModel, nav: NavController, kindArg: String, ref: S
             Spacer(Modifier.height(Sp.sm))
         }
         ExportPanel(vm, doc, true, hideNames, hideNotes) { a, b -> hideNames = a; hideNotes = b }
+    }
+    if (explain) {
+        // كيف انحسب تقرير الفترة: كل قيد دخل/مصروف بعملته الأصلية مع رابط حركته
+        val es = view.entries.filter { !it.date.isBefore(f) && !it.date.isAfter(t) && (it.kind.countsAsIncome || it.kind.countsAsExpense) && (kind != ReportKind.STATEMENT || it.accountId == account) }
+        val e = app.rasidi.core.explain.Explanation(
+            title = "كيف انحسب ${doc?.title ?: "التقرير"}",
+            result = doc?.summary?.joinToString(" · ") { "${it.first}: ${it.second.display()}" } ?: "",
+            formula = "الدخل = مجموع قيود الدخل؛ المصروف = قيود المصروف والرسوم والزكاة؛ الصافي = الدخل − المصروف لكل عملة على حدة. التحويل الداخلي والرصيد الافتتاحي وتسوية الديون مستبعدة. لا تحويل بين العملات في تقرير الفترة.",
+            items = es.sortedBy { it.date }.take(300).map { x -> app.rasidi.core.explain.Explanation.Item("${x.date} · ${ReportBuilders.kindAr(x.kind)} · ${view.accountById[x.accountId]?.name}", app.rasidi.core.money.Fmt.money(x.amount), note = x.categoryId?.let { view.categoryNames[it] }, refIds = listOf(x.txnId)) },
+            pending = if (es.size > 300) listOf("يظهر أول 300 قيد من ${es.size}؛ التصدير التفصيلي يشمل الكل") else emptyList(),
+            asOf = "$f – $t",
+        )
+        ExplanationDialog(e, { explain = false }) { id -> explain = false; nav.navigate(app.rasidi.ui.Routes.txn(id)) }
     }
 }
 

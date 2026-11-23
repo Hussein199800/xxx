@@ -11,7 +11,7 @@ internal fun esc(s: String): String {
         ch == '&' -> sb.append("&amp;"); ch == '<' -> sb.append("&lt;"); ch == '>' -> sb.append("&gt;")
         ch == '"' -> sb.append("&quot;")
         ch.code < 0x20 && ch != '\t' && ch != '\n' && ch != '\r' -> {} // محارف تحكم غير مسموحة في XML
-        ch in '⁦'..'⁩' -> {} // عزل الاتجاه يُعالج بالتنسيق لا بالمحارف
+        ch in '\u2066'..'\u2069' -> {} // عزل الاتجاه يُعالج بالتنسيق لا بالمحارف
         else -> sb.append(ch)
     }
     return sb.toString()

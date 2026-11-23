@@ -252,7 +252,7 @@ fun DebtsScreen(vm: MainViewModel, nav: NavController) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(r.debt.party, style = MaterialTheme.typography.titleMedium, color = c.txt)
-                        r.nextDue?.let { Text("الاستحقاق: $it", style = MaterialTheme.typography.bodySmall, color = c.mute) }
+                        r.nextDue?.let { Text("الاستحقاق: \u2066$it\u2069", style = MaterialTheme.typography.bodySmall, color = c.mute) }
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         AmountText(r.remaining)
@@ -262,7 +262,7 @@ fun DebtsScreen(vm: MainViewModel, nav: NavController) {
                 if (r.debt.principal.minor > 0) {
                     Spacer(Modifier.height(6.dp))
                     LinearProgressIndicator(progress = { (r.paid.minor.toFloat() / r.debt.principal.minor).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = c.pri, trackColor = c.soft)
-                    Text("سُدّد ${Fmt.money(r.paid, false)} من ${Fmt.money(r.debt.principal, false)}", style = MaterialTheme.typography.bodySmall, color = c.mute)
+                    Text("سُدّد ${Fmt.money(r.paid)} من ${Fmt.money(r.debt.principal)}", style = MaterialTheme.typography.bodySmall, color = c.mute)
                 }
             }
         }

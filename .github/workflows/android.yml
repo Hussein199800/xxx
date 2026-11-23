@@ -1,0 +1,71 @@
+name: Android CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Tests, lint, build (debug + beta)
+        run: ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleBeta --stacktrace
+      - name: Open report samples (openpyxl / python-docx / pdfplumber + LibreOffice)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libreoffice-calc libreoffice-writer poppler-utils > /dev/null
+          pip install -q openpyxl python-docx pdfplumber
+          python3 scripts/verify_samples.py samples build/verify
+      - name: SHA-256
+        run: sha256sum app/build/outputs/apk/*/*.apk | tee apk-sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rasidi-apks
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/beta/*.apk
+            apk-sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rasidi-report-samples
+          path: |
+            samples/
+            build/verify/verify-samples.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: |
+            core/build/reports/tests/
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+
+  release:
+    # الإصدار الموقّع يعمل فقط عند توفر أسرار التوقيع الفعلية في إعدادات المستودع
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Signed release
+        env:
+          KEYSTORE_B64: ${{ secrets.RASIDI_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.RASIDI_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RASIDI_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RASIDI_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then echo "لا توجد أسرار توقيع؛ تخطّي الإصدار الموقّع"; exit 0; fi
+          echo "$KEYSTORE_B64" | base64 -d > release.jks
+          printf "storeFile=release.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
+          ./gradlew :app:assembleRelease
+          sha256sum app/build/outputs/apk/release/*.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: rasidi-release, path: app/build/outputs/apk/release/*.apk, if-no-files-found: ignore }

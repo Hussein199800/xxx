@@ -39,7 +39,7 @@ object ArabicShaper {
     /** وحدة عرض: رمز الشكل المرسوم والنص المنطقي الذي يمثّله (لـ ToUnicode). */
     data class Cluster(val cp: Int, val source: String, val index: Int)
 
-    fun clean(s: String): String = s.replace(Regex("[⁦-⁩‎‏‪-‮؜]"), "").filterNot(::transparent)
+    fun clean(s: String): String = s.replace(Regex("[\u2066-\u2069\u200E\u200F\u202A-\u202E\u061C]"), "").filterNot(::transparent)
 
     /** يشكّل نصاً منطقياً إلى وحدات بترتيبها المنطقي. */
     fun shape(text: String): List<Cluster> {

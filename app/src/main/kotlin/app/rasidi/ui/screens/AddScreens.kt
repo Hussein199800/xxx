@@ -83,7 +83,7 @@ fun IncomeExpenseForm(vm: MainViewModel, nav: NavController, income: Boolean, ed
             if (editing) vm.launchSafe("تم حفظ التعديل وتسجيله في سجل التعديلات") { vm.repo.editSimple(editTxnId, m!!.minor, categoryId, date, note, party); nav.popBackStack() }
             else vm.launchSafe("تم الحفظ", undoable = true) { vm.repo.addIncomeExpense(income, acc!!.id, m!!.minor, categoryId, date, note, party, requestId).also { nav.popBackStack() } }
         })
-        if (editing && editEntry != null && m != null) Text("الأثر: ${Fmt.money(editEntry.amount, false)} ← ${Fmt.money(if (income) m else -m, false)}", color = LocalR.current.mute, modifier = Modifier.padding(top = 8.dp))
+        if (editing && editEntry != null && m != null) Text("الأثر: ${Fmt.money(editEntry.amount)} ← ${Fmt.money(if (income) m else -m)}", color = LocalR.current.mute, modifier = Modifier.padding(top = 8.dp))
     }
 }
 
@@ -209,10 +209,10 @@ fun DebtPaymentForm(vm: MainViewModel, nav: NavController, debtRef: String) {
         Text("الدين", style = MaterialTheme.typography.titleSmall, color = c.mute)
         ChipRow(open.map { it.debt.id }, debtId, { id -> open.first { it.debt.id == id }.let { "${it.debt.party} · ${it.debt.direction.ar}" } }, { debtId = it })
         if (row != null) {
-            Text("المتبقي: ${Fmt.money(row.remaining, false)}", color = c.mute, modifier = Modifier.padding(vertical = 6.dp))
+            Text("المتبقي: ${Fmt.money(row.remaining)}", color = c.mute, modifier = Modifier.padding(vertical = 6.dp))
             AmountField(amount, row.debt.currency, if (row.debt.direction == DebtDirection.I_OWE) "المبلغ المسدَّد" else "المبلغ المحصَّل")
             val m = amount.parse(row.debt.currency)
-            if (m != null && m > row.remaining) Text("يتجاوز المتبقي (${Fmt.money(row.remaining, false)})", color = c.danger)
+            if (m != null && m > row.remaining) Text("يتجاوز المتبقي (${Fmt.money(row.remaining)})", color = c.danger)
             AccountPicker(vm, account, if (row.debt.direction == DebtDirection.I_OWE) "دُفع من" else "استُلم في") { account = it }
             TextButton(onClick = { account = null }) { Text("بلا حركة نقدية") }
             val acc = view.accountById[account]

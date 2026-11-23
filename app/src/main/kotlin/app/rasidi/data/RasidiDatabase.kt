@@ -31,7 +31,7 @@ data class BackupJobEntity(
         InventoryEntity::class, InventoryLineEntity::class, ZakatEstimateEntity::class, ZakatPaymentEntity::class,
         SettingEntity::class, AuditEntity::class, BackupJobEntity::class,
     ],
-    version = 1,
+    version = RasidiDatabase.VERSION,
     exportSchema = true,
 )
 abstract class RasidiDatabase : RoomDatabase() {
@@ -39,6 +39,7 @@ abstract class RasidiDatabase : RoomDatabase() {
     abstract fun jobs(): BackupJobDao
 
     companion object {
+        const val VERSION = 1
         const val LEDGER_DB = "rasidi.db"
         const val DEMO_DB = "rasidi-demo.db"
 

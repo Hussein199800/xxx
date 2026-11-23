@@ -50,6 +50,14 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfigs.findByName("release")?.let { signingConfig = it }
         }
+        // نسخة تجريبية خفيفة: نفس تصغير الإصدار (R8) لكن موقّعة بمفتاح الاختبار المشترك
+        create("beta") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".beta"
+            versionNameSuffix = "-beta"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+        }
     }
 
     compileOptions {
@@ -63,6 +71,9 @@ android {
         unitTests.all {
             it.systemProperty("rasidi.screens.dir", rootProject.layout.projectDirectory.dir("docs/screens").asFile.absolutePath)
             it.systemProperty("robolectric.graphicsMode", "NATIVE")
+            it.systemProperty("rasidi.schemas.dir", "$projectDir/schemas")
+            // android-all يُجلب وقت التشغيل؛ نستخدم مرآة Google لـ Maven Central لتفادي 429
+            it.systemProperty("robolectric.dependency.repo.url", "https://maven-central.storage-download.googleapis.com/maven2")
             it.environment("LC_ALL", "C.UTF-8")
             it.jvmArgs("-Xmx3g", "-Dfile.encoding=UTF-8", "-Dsun.jnu.encoding=UTF-8")
         }
@@ -71,7 +82,7 @@ android {
     lint {
         abortOnError = true
         warningsAsErrors = false
-        disable += setOf("MissingTranslation", "GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion")
+        disable += setOf("MissingTranslation", "GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion", "ObsoleteSdkInt")
     }
 }
 

@@ -52,6 +52,7 @@ private val tabs = listOf(
 fun RasidiRoot(vm: MainViewModel, startOverride: String? = null) {
     val nav = rememberNavController()
     val ready by vm.ready.collectAsStateWithLifecycle()
+    val demo by vm.demo.collectAsStateWithLifecycle()
     val snack = remember { SnackbarHostState() }
     var quickAdd by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
@@ -61,7 +62,7 @@ fun RasidiRoot(vm: MainViewModel, startOverride: String? = null) {
         }
     }
     if (!ready) { Box(Modifier.fillMaxSize().background(LocalR.current.bg)); return }
-    val start = startOverride ?: if (!vm.device.onboarded && !vm.demo.value) Routes.ONBOARD else Routes.HOME
+    val start = startOverride ?: if (!vm.device.onboarded && !demo) Routes.ONBOARD else Routes.HOME
     val back by nav.currentBackStackEntryAsState()
     val route = back?.destination?.route
     val showBar = route in tabs.map { it.route }

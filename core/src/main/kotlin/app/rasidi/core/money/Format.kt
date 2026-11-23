@@ -8,7 +8,7 @@ import java.util.Locale
 
 /** تنسيق موحّد للعرض: أرقام غربية بفاصل آلاف، والسالب يُعرض بإشارة ناقص صريحة داخل عزل اتجاه. */
 object Fmt {
-    const val LRI = "⁦"; const val PDI = "⁩"
+    const val LRI = "\u2066"; const val PDI = "\u2069"
 
     private fun df(digits: Int) = DecimalFormat(
         if (digits == 0) "#,##0" else "#,##0." + "0".repeat(digits),

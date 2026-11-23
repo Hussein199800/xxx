@@ -47,14 +47,14 @@ fun AmountField(state: AmountState, currency: CurrencyDef?, label: String = "ا�
                 when {
                     err && r == null -> Text("رقم غير صالح")
                     err -> Text("خانات عشرية أكثر من المسموح لـ ${currency?.code}")
-                    r != null && r.ambiguous -> Text("سيُحفظ كـ ${m?.let { Fmt.money(it, false) } ?: r.normalized} — تأكد أن الفاصل للآلاف", color = c.warn)
-                    m != null -> Text("= ${Fmt.money(m, false)}", color = c.mute)
+                    r != null && r.ambiguous -> Text("سيُحفظ كـ ${m?.let { Fmt.money(it) } ?: r.normalized} — تأكد أن الفاصل للآلاف", color = c.warn)
+                    m != null -> Text("= ${Fmt.money(m)}", color = c.mute)
                     else -> {}
                 }
             },
         )
         if (r?.ambiguous == true && !state.confirmedAmbiguous) {
-            Row { TextButton(onClick = { state.confirmedAmbiguous = true }) { Text("نعم، ${m?.let { Fmt.money(it, false) }}") }
+            Row { TextButton(onClick = { state.confirmedAmbiguous = true }) { Text("نعم، ${m?.let { Fmt.money(it) }}") }
                 TextButton(onClick = { state.text = state.text.replace(',', '.').let { t -> if (t.count { it == '.' } == 1) t else t } ; state.confirmedAmbiguous = true }) { Text("لا، الفاصل عشري") } }
         }
     }
@@ -66,7 +66,7 @@ fun DateField(date: LocalDate, onChange: (LocalDate) -> Unit, label: String = "�
     var open by remember { mutableStateOf(false) }
     OutlinedButton(onClick = { open = true }, modifier = modifier.heightIn(min = 52.dp), shape = RoundedCornerShape(18.dp)) {
         Icon(Icons.Filled.CalendarMonth, null); Spacer(Modifier.width(8.dp))
-        Text("$label: ${if (date == LocalDate.now()) "اليوم " else ""}$date")
+        Text("$label: ${if (date == LocalDate.now()) "اليوم " else ""}\u2066${date}\u2069")
     }
     if (open) {
         val st = rememberDatePickerState(initialSelectedDateMillis = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())

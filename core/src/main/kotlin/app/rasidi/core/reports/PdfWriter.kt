@@ -12,7 +12,7 @@ class PdfWriter(private val regular: TrueTypeFont, private val bold: TrueTypeFon
 
     companion object {
         fun withBundledFonts(): PdfWriter {
-            fun load(n: String) = PdfWriter::class.java.getResourceAsStream("/fonts/$n")?.use { it.readBytes() }
+            fun load(n: String) = PdfWriter::class.java.getResourceAsStream("/rasidi-fonts/$n")?.use { it.readBytes() }
                 ?: throw IllegalStateException("الخط $n غير موجود")
             return PdfWriter(TrueTypeFont(load("cairo_regular.ttf"), "Cairo-Regular"), TrueTypeFont(load("cairo_bold.ttf"), "Cairo-Bold"))
         }

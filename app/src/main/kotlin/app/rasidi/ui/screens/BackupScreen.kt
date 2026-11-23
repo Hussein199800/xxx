@@ -88,7 +88,7 @@ fun BackupScreen(vm: MainViewModel, nav: NavController) {
         scope.launch {
             try {
                 val b = withContext(Dispatchers.IO) {
-                    ctx.contentResolver.openInputStream(uri)!!.use { s -> s.readNBytes((BackupFormat.MAX_FILE_BYTES + 1).toInt()) }
+                    ctx.contentResolver.openInputStream(uri)!!.use { s -> readCapped(s, BackupFormat.MAX_FILE_BYTES + 1) }
                 }
                 BackupFormat.readHeader(b)
                 restoreBytes = b; restoreSource = "ملف"
@@ -217,6 +217,7 @@ fun BackupScreen(vm: MainViewModel, nav: NavController) {
                 }
             }
         }
+        CsvImportSection(vm)
         val safety = container.backupService.safetyFiles()
         if (safety.isNotEmpty()) {
             SectionHeader("نسخ الأمان قبل الاستعادة")
@@ -292,4 +293,59 @@ private fun RestoreDialog(vm: MainViewModel, bytes: ByteArray, source: String, o
             }) { Text("استبدل واستعد") }
         },
         dismissButton = { TextButton(enabled = !working, onClick = onDone) { Text("إلغاء") } })
+}
+
+/** استيراد حركات من ملف CSV صدّره المستخدم من تطبيقه القديم. منفصل عن استعادة دفتر كامل. */
+@Composable
+private fun CsvImportSection(vm: MainViewModel) {
+    val c = LocalR.current
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var bytes by remember { mutableStateOf<ByteArray?>(null) }
+    var sypOld by remember { mutableStateOf(false) }
+    var createAccounts by remember { mutableStateOf(true) }
+    var dups by remember { mutableStateOf<List<String>>(emptyList()) }
+    var result by remember { mutableStateOf<String?>(null) }
+    val preview = remember(bytes, sypOld) { bytes?.let { app.rasidi.core.importer.CsvImport.parse(it, app.rasidi.core.importer.CsvImport.Options(sypMeansOld = sypOld)) } }
+    LaunchedEffect(preview) { dups = preview?.let { vm.repo.importDuplicatesPreview(it) } ?: emptyList() }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch { bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { readCapped(it, 20L * 1024 * 1024) } }; result = null }
+    }
+    val saveTemplate = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri != null) scope.launch { withContext(Dispatchers.IO) { ctx.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(("\uFEFF" + app.rasidi.core.importer.CsvImport.TEMPLATE).toByteArray()) } }; vm.message("حُفظ القالب") }
+    }
+    SectionHeader("استيراد من تطبيق قديم (CSV)")
+    RCard {
+        Text("صدّر حركاتك من التطبيق القديم إلى CSV، ثم طابق الأعمدة مع القالب: date,type,amount,currency,account,category,note,party,id", style = MaterialTheme.typography.bodySmall, color = c.mute)
+        Row(horizontalArrangement = Arrangement.spacedBy(Sp.xs)) {
+            SoftButton("احفظ القالب", { saveTemplate.launch("rasidi-template.csv") }, Modifier.weight(1f))
+            SoftButton("اختر ملف CSV", { pick.launch(arrayOf("text/*", "*/*")) }, Modifier.weight(1f))
+        }
+        preview?.let { p ->
+            Spacer(Modifier.height(Sp.xs))
+            Row(verticalAlignment = Alignment.CenterVertically) { Switch(sypOld, { sypOld = it }); Spacer(Modifier.width(8.dp)); Text(if (sypOld) "«SYP» في الملف = ليرة قديمة" else "«SYP» في الملف = ليرة جديدة") }
+            Text("يُحفظ المبلغ بوحدته كما هو؛ لا يُطبّق معامل 100 عند الاستيراد.", style = MaterialTheme.typography.bodySmall, color = c.mute)
+            KeyValue("صفوف صالحة", p.rows.size.toString()); KeyValue("صفوف غير صالحة", p.invalid.size.toString())
+            p.totals().forEach { (code, t) -> KeyValue(code, "دخل ${app.rasidi.core.money.Fmt.money(t.first)} · مصروف ${app.rasidi.core.money.Fmt.money(t.second)}") }
+            p.invalid.take(5).forEach { Text("سطر ${it.line}: ${it.reason}", color = c.danger, style = MaterialTheme.typography.bodySmall) }
+            if (dups.isNotEmpty()) { Text("حركات مشابهة موجودة (${dups.size}) — راجعها:", color = c.warn); dups.take(5).forEach { Text("• $it", style = MaterialTheme.typography.bodySmall, color = c.warn) } }
+            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(createAccounts, { createAccounts = it }); Text("أنشئ الحسابات غير الموجودة") }
+            PrimaryButton("استورد ${p.rows.size} حركة", enabled = p.rows.isNotEmpty(), modifier = Modifier.fillMaxWidth(), onClick = {
+                scope.launch {
+                    try {
+                        val r = vm.repo.importCsv(p, createAccounts)
+                        result = "استُورد ${r.imported}، موجود مسبقاً ${r.alreadyImported}، تعذّر ${r.failed.size}" + r.failed.take(3).joinToString("") { "\n$it" }
+                    } catch (e: Exception) { result = "فشل الاستيراد: ${e.message}" }
+                }
+            })
+        }
+        result?.let { Text(it, color = c.pri) }
+    }
+}
+
+/** يقرأ حتى [max] بايت (بديل readNBytes المتاح من API 33 فقط). */
+private fun readCapped(s: java.io.InputStream, max: Long): ByteArray {
+    val out = java.io.ByteArrayOutputStream(); val buf = ByteArray(64 * 1024); var total = 0L
+    while (total < max) { val n = s.read(buf, 0, minOf(buf.size.toLong(), max - total).toInt()); if (n < 0) break; out.write(buf, 0, n); total += n }
+    return out.toByteArray()
 }

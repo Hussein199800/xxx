@@ -1,0 +1,45 @@
+# رصيدي
+
+دفتر مالي شخصي عربي على أندرويد. يسجّل المصروف والدخل والتحويل والديون والذهب، ويجرد المال الموزّع بين عملات وذهب بالدولار، ويقدّر الزكاة ويسجّل توزيعها. يعمل بالكامل بلا إنترنت. Google Drive اختياري للنسخ المشفّر.
+
+| | |
+|---|---|
+| الحزمة | `app.rasidi.ledger` (تصحيح: `.debug`، تجريبي: `.beta`) |
+| الحد الأدنى | Android 8.0 (API 26) · الهدف API 35 |
+| التقنية | Kotlin 2.0.21 · Jetpack Compose (BOM 2024.12.01) · Room 2.6.1 · WorkManager 2.10 · AGP 8.7.3 · Gradle 8.14.3 |
+| الخط | Cairo (عادي/عريض، مستخرج من الخط المتغيّر، مضمَّن في التطبيق وفي ملفات PDF) |
+
+## التشغيل من checkout جديد
+
+```bash
+# يحتاج JDK 17+ وAndroid SDK (platform 35, build-tools 35). ضع المسار في local.properties: sdk.dir=/path/to/sdk
+./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+./gradlew :app:assembleBeta          # APK تجريبي خفيف (R8) موقّع بمفتاح الاختبار المشترك
+./gradlew :app:connectedDebugAndroidTest   # على جهاز أو محاكي متصل
+python3 scripts/verify_samples.py samples build/verify   # يفتح عينات XLSX/DOCX/PDF فعلياً ويتحقق منها
+```
+
+- `:core:test` يولّد أيضاً عينات التقارير في `samples/`.
+- `:app:testDebugUnitTest` (Robolectric) يشمل السجل والنسخ والاستعادة والأداء، ويولّد صور الواجهة في `docs/screens/` ونتائج الأداء في `docs/perf-results.txt`.
+- الإصدار الموقّع: أنشئ `keystore.properties` (خارج Git) بالمفاتيح `storeFile, storePassword, keyAlias, keyPassword` ثم `./gradlew :app:assembleRelease`. ارفع `versionCode` مع كل تحديث، وأبقِ مفتاح التوقيع نفسه دائماً.
+
+## البنية
+
+| المسار | الدور |
+|---|---|
+| `core/` | Kotlin خالص: المال والأسعار والرصيد والديون والذهب والجرد والزكاة والتوزيع، كيانات الدفتر، صيغة `.rasidi` المشفّرة، محرك Drive وعميله، مولّدات XLSX/DOCX/PDF، استيراد CSV. كل شيء مختبر على JVM. |
+| `app/.../data/` | Room، المستودع (كل كتابة في معاملة واحدة مع منع التكرار)، المخطط المصدَّر في `app/schemas/`. |
+| `app/.../backup/` | إنشاء النسخ ومعاينتها واستعادتها، تفويض Google، عامل WorkManager. |
+| `app/.../reports/` | الحفظ عبر منتقي Android والمشاركة عبر FileProvider. |
+| `app/.../security/` | معرّف التثبيت، رمز الاستعادة مغلّفاً بـ Android Keystore، ربط Drive. |
+| `app/.../ui/` | Compose: الثيم والمكوّنات والشاشات. |
+| `docs/` | نموذج البيانات، قواعد الحساب، دليل Google والاستعادة، صور الواجهة. |
+| `VALIDATION.md` | ما جرى اختباره فعلياً وعلى أي بيئة. |
+
+### لماذا المولّدات في `core` وليست في `app/.../reports`؟
+حتى تُختبر وتُولَّد عيناتها على JVM دون جهاز، وتبقى صيغة واحدة للشاشة والملفات الثلاثة. الجزء الخاص بأندرويد (المنتقي والمشاركة) في `app/.../reports/`.
+
+### الإصدارات
+- minSdk 26 كما اقتُرح. لم يُغيَّر.
+- compileSdk/targetSdk 35 (أحدث منصة مستقرة مدعومة في AGP 8.7).
+- Robolectric 4.16 للاختبارات (يدعم الرسم الأصلي لصور الواجهة). ملف Robolectric الأصلي يُجلب من مرآة Google لـ Maven Central لأن المستودع الرئيسي يرفض أحياناً تنزيله الكبير (429).

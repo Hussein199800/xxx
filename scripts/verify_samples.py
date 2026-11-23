@@ -74,7 +74,9 @@ for p in sorted(glob.glob(os.path.join(root, "**", "*.pdf"), recursive=True)):
 
 # LibreOffice: تحويل XLSX وDOCX إلى PDF (فتح فعلي في محرر متوافق) ثم صورة الصفحة الأولى
 lo_dir = os.path.join(out, "libreoffice"); os.makedirs(lo_dir, exist_ok=True)
-for f in sorted(glob.glob(os.path.join(root, "*.xlsx")) + glob.glob(os.path.join(root, "*.docx"))):
+import shutil
+lo_files = [] if (os.environ.get("SKIP_LIBREOFFICE") or not shutil.which("soffice")) else None
+for f in [] if lo_files is not None else sorted(glob.glob(os.path.join(root, "*.xlsx")) + glob.glob(os.path.join(root, "*.docx"))):
     r = subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir", lo_dir, f], capture_output=True, text=True, timeout=180)
     pdf_out = os.path.join(lo_dir, os.path.splitext(os.path.basename(f))[0] + ".pdf")
     okc = os.path.exists(pdf_out)

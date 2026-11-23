@@ -56,7 +56,7 @@ fun InventoryScreen(vm: MainViewModel, nav: NavController) {
                     Column(Modifier.weight(1f)) {
                         Text("${l.item.kind.ar}: ${l.item.label}", style = MaterialTheme.typography.titleSmall)
                         Text(l.item.original, style = MaterialTheme.typography.bodySmall, color = c.mute)
-                        l.rate?.let { Text("${it.label()} · ${it.source} · ${it.date}", style = MaterialTheme.typography.bodySmall, color = c.mute) }
+                        l.rate?.let { Text("${it.label()} · ${it.source} · \u2066\u2066${it.date}\u2069\u2069", style = MaterialTheme.typography.bodySmall, color = c.mute) }
                         l.note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = c.warn) }
                     }
                     Column(horizontalAlignment = Alignment.End) {
@@ -66,7 +66,7 @@ fun InventoryScreen(vm: MainViewModel, nav: NavController) {
                 }
                 when (l.state) {
                     PriceState.SUGGESTED -> TextButton(onClick = { confirmed = confirmed + l.item.id }) { Text("اعتمد السعر الأقدم مع ملاحظة") }
-                    PriceState.MISSING -> TextButton(onClick = { nav.navigate(Routes.RATES) }) { Text("أضف سعراً بتاريخ $date") }
+                    PriceState.MISSING -> TextButton(onClick = { nav.navigate(Routes.RATES) }) { Text("أضف سعراً بتاريخ \u2066${date}\u2069") }
                     PriceState.NEEDS_DECISION -> Row { TextButton(onClick = { oldSyp = oldSyp + (l.item.id to null) }) { Text("قابل للاستبدال") } }
                     else -> {}
                 }
@@ -79,7 +79,7 @@ fun InventoryScreen(vm: MainViewModel, nav: NavController) {
         RCard(onClick = { explain = inv.explain() }) {
             LineKind.values().forEach { k ->
                 val t = inv.total(k)
-                if (t.signum() != 0) KeyValue(k.ar, Fmt.usd(if (k.isLiability) t.negate() else t, false))
+                if (t.signum() != 0) KeyValue(k.ar, Fmt.usd(if (k.isLiability) t.negate() else t))
             }
             HorizontalDivider(color = c.line)
             Text(if (inv.isComplete) "صافي الأموال" else "إجمالي البنود المسعّرة (جزئي)", color = c.mute)
@@ -104,7 +104,7 @@ fun InventoryScreen(vm: MainViewModel, nav: NavController) {
             RCard(onClick = { openSaved = if (openSaved == latest.id) null else latest.id }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("جرد ${latest.date}", style = MaterialTheme.typography.titleMedium)
+                        Text("جرد \u2066\u2066${latest.date}\u2069\u2069", style = MaterialTheme.typography.titleMedium)
                         Text("مراجعة ${latest.revision}${if (latest.yearClose) " · إقفال سنة" else ""}", style = MaterialTheme.typography.bodySmall, color = c.mute)
                     }
                     Column(horizontalAlignment = Alignment.End) {
@@ -114,12 +114,12 @@ fun InventoryScreen(vm: MainViewModel, nav: NavController) {
                 }
                 if (openSaved == latest.id) {
                     val saved = savedInventory(latest, view.s.inventoryLines)
-                    g.sortedByDescending { it.revision }.forEach { r -> Text("• مراجعة ${r.revision}: ${Fmt.usd(BigDecimal(r.pricedNetUsd), false)} — ${if (r.status == "FINAL") "معتمد" else "مسودة"}", style = MaterialTheme.typography.bodySmall, color = c.mute) }
+                    g.sortedByDescending { it.revision }.forEach { r -> Text("• مراجعة ${r.revision}: ${Fmt.usd(BigDecimal(r.pricedNetUsd))} — ${if (r.status == "FINAL") "معتمد" else "مسودة"}", style = MaterialTheme.typography.bodySmall, color = c.mute) }
                     Row(horizontalArrangement = Arrangement.spacedBy(Sp.xs)) {
                         if (latest.status == "FINAL") PrimaryButton("الزكاة", { nav.navigate(Routes.zakat(latest.id)) }, Modifier.weight(1f), icon = Icons.Filled.VolunteerActivism)
                         SoftButton("مراجعة جديدة", { date = LocalDate.parse(latest.date); revisionOf = latest.groupId; confirmed = emptySet() }, Modifier.weight(1f))
                     }
-                    SoftButton("تصدير", { export = saved; exportLabel = "INV-${latest.date} / مراجعة ${latest.revision}" }, Modifier.fillMaxWidth().padding(top = 6.dp))
+                    SoftButton("تصدير", { export = saved; exportLabel = "INV-\u2066\u2066${latest.date}\u2069\u2069 / مراجعة ${latest.revision}" }, Modifier.fillMaxWidth().padding(top = 6.dp))
                     HowLink { explain = saved.explain() }
                 }
             }
@@ -152,7 +152,7 @@ fun ZakatScreen(vm: MainViewModel, nav: NavController, inventoryId: String) {
     val res = remember(decisions, nisabKind, hawl, hawlDone, hawlMethod, view) {
         ZakatCalc.compute(ZakatInput(inv, decisions, nisab, view.rates, hawl.ifBlank { "غير محدد" }, hawlMethod, hawlDone))
     }
-    ScreenScaffold("الزكاة", { nav.popBackStack() }, sub = "من جرد ${invE.date} (مراجعة ${invE.revision}). تقدير مبني على خياراتك، وليس فتوى.") {
+    ScreenScaffold("الزكاة", { nav.popBackStack() }, sub = "من جرد \u2066\u2066${invE.date}\u2069\u2069 (مراجعة ${invE.revision}). تقدير مبني على خياراتك، وليس فتوى.") {
         RCard {
             Text("الحول الهجري", style = MaterialTheme.typography.titleMedium)
             TextIn(hawl, { hawl = it }, "تاريخ الحول (مثال 1447/09/01)")
@@ -164,7 +164,7 @@ fun ZakatScreen(vm: MainViewModel, nav: NavController, inventoryId: String) {
         RCard {
             Text("النصاب", style = MaterialTheme.typography.titleMedium)
             ChipRow(listOf("gold", "silver"), nisabKind, { if (it == "gold") "85غ ذهب عيار 24" else "595غ فضة خالصة" }, { nisabKind = it })
-            Text(res.nisabUsd?.let { "قيمة النصاب: ${Fmt.usd(it, false)} (${res.nisabRate?.label()} · ${res.nisabRate?.date})" } ?: "أدخل سعر ${Rate.unitLabel(nisab.metalUnit)} بتاريخ ${invE.date}", color = if (res.nisabUsd == null) c.warn else c.mute)
+            Text(res.nisabUsd?.let { "قيمة النصاب: ${Fmt.usd(it)} (${res.nisabRate?.label()} · \u2066${res.nisabRate?.date}\u2069)" } ?: "أدخل سعر ${Rate.unitLabel(nisab.metalUnit)} بتاريخ \u2066\u2066${invE.date}\u2069\u2069", color = if (res.nisabUsd == null) c.warn else c.mute)
             if (res.nisabUsd == null) TextButton(onClick = { nav.navigate(Routes.RATES) }) { Text("افتح الأسعار") }
         }
         SectionHeader("البنود: الإدراج والسبب")
@@ -182,10 +182,10 @@ fun ZakatScreen(vm: MainViewModel, nav: NavController, inventoryId: String) {
             Spacer(Modifier.height(Sp.xs))
         }
         RCard(onClick = { explain = true }, tint = c.goldSoft) {
-            KeyValue("الأموال والأصول المدرجة", Fmt.usd(res.assetsUsd, false))
-            KeyValue("الديون التي لي المدرجة", Fmt.usd(res.receivablesUsd, false))
-            KeyValue("الالتزامات المخصومة", Fmt.usd(res.deductionsUsd, false))
-            KeyValue("الوعاء", Fmt.usd(res.baseUsd, false))
+            KeyValue("الأموال والأصول المدرجة", Fmt.usd(res.assetsUsd))
+            KeyValue("الديون التي لي المدرجة", Fmt.usd(res.receivablesUsd))
+            KeyValue("الالتزامات المخصومة", Fmt.usd(res.deductionsUsd))
+            KeyValue("الوعاء", Fmt.usd(res.baseUsd))
             HorizontalDivider(color = c.line)
             Text("الزكاة المقدّرة", color = c.mute)
             UsdText(res.zakatUsd, style = MaterialTheme.typography.headlineMedium, color = c.gold)
@@ -221,9 +221,9 @@ private fun ZakatDistribution(vm: MainViewModel, nav: NavController, est: ZakatE
     val rid = remember(paidEntities.size) { vm.newRequestId() }
     SectionHeader("جهّز التوزيع")
     RCard {
-        KeyValue("المستحق المثبّت", Fmt.usd(due, false)); KeyValue("المدفوع", Fmt.usd(prog.paidUsd, false))
+        KeyValue("المستحق المثبّت", Fmt.usd(due)); KeyValue("المدفوع", Fmt.usd(prog.paidUsd))
         Text(prog.remainingLabel + " USD", style = MaterialTheme.typography.headlineSmall, color = if (prog.remainingUsd.signum() <= 0) c.pri else c.gold)
-        if (prog.overpaidUsd.signum() > 0) StatusChip("مدفوع زائد ${Fmt.usd(prog.overpaidUsd, false)}", Tone.INFO)
+        if (prog.overpaidUsd.signum() > 0) StatusChip("مدفوع زائد ${Fmt.usd(prog.overpaidUsd)}", Tone.INFO)
         LinearProgressIndicator(progress = { if (due.signum() == 0) 1f else (prog.paidUsd.toFloat() / due.toFloat()).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), color = c.gold, trackColor = c.soft)
     }
     // اقتراح بحصص متساوية بين عملات الحسابات
@@ -236,9 +236,9 @@ private fun ZakatDistribution(vm: MainViewModel, nav: NavController, est: ZakatE
             Text("خطة مقترحة بحصص متساوية (أسعار اليوم)", style = MaterialTheme.typography.titleSmall)
             val shares = rates.mapIndexed { i, t -> if (i == rates.lastIndex) t.copy(first = BigDecimal.ONE - rates.dropLast(1).fold(BigDecimal.ZERO) { a, x -> a + x.first }) else t }
             val plan = Distribution.planByShares(remaining, shares)
-            plan.forEach { p -> KeyValue(Fmt.money(p.amount, false), "≈ ${Fmt.usd(p.usd, false)}") }
+            plan.forEach { p -> KeyValue(Fmt.money(p.amount), "≈ ${Fmt.usd(p.usd)}") }
             val tot = plan.fold(BigDecimal.ZERO) { a, p -> a + p.usd }
-            Text("فرق التقريب: ${Fmt.usd(tot - remaining, false)} (عُدّلت الدفعة الأخيرة لتغطيته)", style = MaterialTheme.typography.bodySmall, color = c.mute)
+            Text("فرق التقريب: ${Fmt.usd(tot - remaining)} (عُدّلت الدفعة الأخيرة لتغطيته)", style = MaterialTheme.typography.bodySmall, color = c.mute)
         }
     }
     SectionHeader("سجّل دفعة منفّذة")
@@ -253,9 +253,9 @@ private fun ZakatDistribution(vm: MainViewModel, nav: NavController, est: ZakatE
             lookup is RateLookup.Exact -> lookup.rate
             else -> AmountParser.parse(manualRate.text)?.value?.takeIf { it.signum() > 0 }?.let { Rate("m", acc.currency.code, it, RateDirection.UNITS_PER_USD, date, "يدوي عند الدفع") }
         }
-        if (acc != null && lookup !is RateLookup.Exact) { Text("لا سعر ${acc.currency.code} بتاريخ $date؛ أدخل سعر يوم الدفع", color = c.warn); AmountField(manualRate, null, "1 USD = ? ${acc.currency.code}") }
+        if (acc != null && lookup !is RateLookup.Exact) { Text("لا سعر ${acc.currency.code} بتاريخ \u2066${date}\u2069؛ أدخل سعر يوم الدفع", color = c.warn); AmountField(manualRate, null, "1 USD = ? ${acc.currency.code}") }
         val m = amount.parse(acc?.currency)
-        if (m != null && rate != null) Text("= ${Fmt.usd(rate.toUsd(m.amount), false)} بسعر ${rate.label()}", color = c.mute)
+        if (m != null && rate != null) Text("= ${Fmt.usd(rate.toUsd(m.amount))} بسعر ${rate.label()}", color = c.mute)
         TextIn(beneficiary, { beneficiary = it }, "المستفيد أو الجهة (اختياري، مختصر)")
         PrimaryButton("سجّل الدفعة (مصروف «زكاة»)", enabled = m != null && m.minor > 0 && rate != null, modifier = Modifier.fillMaxWidth(), onClick = {
             vm.launchSafe("سُجّلت الدفعة") { vm.repo.addZakatPayment(est.id, acc!!.id, m!!.minor, rate!!, date, beneficiary, rid); amount.text = "" }
@@ -274,6 +274,6 @@ private fun ZakatDistribution(vm: MainViewModel, nav: NavController, est: ZakatE
     }
     Spacer(Modifier.height(Sp.sm))
     Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(showNames, onShowNames); Text("أظهر أسماء المستفيدين في التصدير") }
-    val doc = remember(res, paid, showNames) { ReportBuilders.zakatReport(res, paid, nowStamp(), "INV-${res.input.inventory.date}", view.accounts.associate { it.id to it.name }, showNames) }
+    val doc = remember(res, paid, showNames) { ReportBuilders.zakatReport(res, paid, nowStamp(), "INV-\u2066\u2066${res.input.inventory.date}\u2069\u2069", view.accounts.associate { it.id to it.name }, showNames) }
     ExportPanel(vm, doc, false, false, false) { _, _ -> }
 }

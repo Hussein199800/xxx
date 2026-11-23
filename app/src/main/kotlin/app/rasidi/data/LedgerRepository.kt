@@ -360,6 +360,48 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         }
     }
 
+    // ---------------- استيراد CSV ----------------
+    data class ImportResult(val imported: Int, val alreadyImported: Int, val failed: List<String>, val possibleDuplicates: List<String>)
+
+    /** يعرض الحركات المتشابهة (التاريخ والمبلغ والحساب) الموجودة مسبقاً لمراجعتها قبل الاستيراد. */
+    suspend fun importDuplicatesPreview(p: app.rasidi.core.importer.CsvImport.Preview): List<String> {
+        val v = view()
+        val existingReq = v.s.txns.map { it.requestId }.toSet()
+        return p.rows.filter { it.requestId !in existingReq }.mapNotNull { r ->
+            val acc = v.accounts.firstOrNull { it.name == r.account && it.currency.code == r.amount.currency.code } ?: return@mapNotNull null
+            val signed = if (r.income) r.amount.minor else -r.amount.minor
+            if (v.entries.any { it.accountId == acc.id && it.date == r.date && it.amount.minor == signed }) "سطر ${r.line}: ${r.date} ${Fmt.money(r.amount, false)} في ${r.account}" else null
+        }
+    }
+
+    /**
+     * يستورد صفوف المعاينة: كل صف بمعرّف طلب ثابت، فإعادة الملف نفسه أو الصف نفسه لا تكرّر شيئاً.
+     * الحساب يُطابق بالاسم والعملة، وينشأ عند الحاجة إن سمح [createAccounts]. الفئة تنشأ إن لم توجد.
+     */
+    suspend fun importCsv(p: app.rasidi.core.importer.CsvImport.Preview, createAccounts: Boolean): ImportResult {
+        var imported = 0; var already = 0; val failed = mutableListOf<String>()
+        val dups = importDuplicatesPreview(p)
+        for (r in p.rows) {
+            if (dao.txnByRequest(r.requestId) != null) { already++; continue }
+            try {
+                var acc = dao.accounts().firstOrNull { it.name == r.account && it.currency == r.amount.currency.code }
+                if (acc == null) {
+                    if (!createAccounts) { failed += "سطر ${r.line}: لا يوجد حساب «${r.account}» بعملة ${r.amount.currency.code}"; continue }
+                    createAccount(r.account, AccountType.CASH, r.amount.currency, 0, r.date, allowNegative = true)
+                    acc = dao.accounts().first { it.name == r.account && it.currency == r.amount.currency.code }
+                }
+                val kind = if (r.income) "INCOME" else "EXPENSE"
+                val catId = if (r.category.isBlank()) dao.categories().first { it.id == if (r.income) "cat-other-in" else "cat-other-out" }.id
+                    else dao.categories().firstOrNull { it.name == r.category && it.kind == kind }?.id ?: addCategory(r.category, kind)
+                val t = addIncomeExpense(r.income, acc.id, r.amount.minor, catId, r.date, r.note, r.party, r.requestId)
+                imported++
+                if (imported == 1) audit("import", p.batchHash, "batch", "rows=${p.rows.size}")
+                t
+            } catch (e: LedgerException) { failed += "سطر ${r.line}: ${e.message}" }
+        }
+        return ImportResult(imported, already, failed, dups)
+    }
+
     // ---------------- الاستعادة ----------------
     /** يستبدل الدفتر كاملاً بلقطة في معاملة واحدة: إما السجل السابق كاملاً أو الجديد كاملاً. */
     suspend fun replaceAll(s: Snapshot) = write {

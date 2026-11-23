@@ -84,7 +84,7 @@ fun TxnDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
         title = { Text("عكس الحركة؟") },
         text = { Column {
             Text("ستُنشأ حركة عكس بنفس التاريخ تعيد أرصدة الحسابات" + (if (t.debtId != null) " والدين" else "") + " معاً، ويبقى الأصل في السجل.")
-            es.forEach { e -> Text("• ${view.accountById[e.accountId]?.name}: ${Fmt.money(-e.amount, false)}", color = c.mute) }
+            es.forEach { e -> Text("• ${view.accountById[e.accountId]?.name}: ${Fmt.money(-e.amount)}", color = c.mute) }
             TextIn(reason, { reason = it }, "السبب (اختياري)")
         } },
         confirmButton = { TextButton(onClick = { confirmReverse = false; vm.launchSafe("تم العكس") { vm.repo.reverse(id, reason, rid) } }) { Text("اعكس") } },
@@ -112,8 +112,8 @@ fun DebtDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
                 }
                 StatusChip(r.status.ar, when (r.status) { DebtStatus.SETTLED -> Tone.OK; DebtStatus.OVERDUE -> Tone.DANGER; DebtStatus.PARTIAL -> Tone.GOLD; DebtStatus.OPEN -> Tone.INFO })
             }
-            KeyValue("أصل الدين", Fmt.money(d.principal, false))
-            KeyValue("المدفوع", Fmt.money(r.paid, false))
+            KeyValue("أصل الدين", Fmt.money(d.principal))
+            KeyValue("المدفوع", Fmt.money(r.paid))
             KeyValue("تاريخ الدين", d.date.toString())
             d.dueDate?.let { KeyValue("الاستحقاق", it.toString()) }
             r.nextDue?.let { KeyValue("الاستحقاق القادم", it.toString()) }
@@ -145,7 +145,7 @@ fun DebtDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
                     Column(Modifier.weight(1f)) {
                         Text(p.date.toString(), style = MaterialTheme.typography.titleSmall)
                         Text(p.accountId?.let { view.accountById[it]?.name } ?: "بلا حركة نقدية", style = MaterialTheme.typography.bodySmall, color = c.mute)
-                        p.walletAmount?.takeIf { it.currency.code != d.currency.code }?.let { Text("بالحساب: ${Fmt.money(it.abs(), false)}", style = MaterialTheme.typography.bodySmall, color = c.mute) }
+                        p.walletAmount?.takeIf { it.currency.code != d.currency.code }?.let { Text("بالحساب: ${Fmt.money(it.abs())}", style = MaterialTheme.typography.bodySmall, color = c.mute) }
                     }
                     AmountText(p.debtAmount, color = if (p.debtAmount.minor < 0) c.mute else c.txt)
                     payTxn[p.id]?.let { tid -> IconButton(onClick = { nav.navigate(Routes.txn(tid)) }) { Icon(Icons.Filled.ChevronLeft, "تفاصيل الدفعة") } }

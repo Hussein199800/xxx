@@ -51,7 +51,7 @@ object DocxWriter {
     /** يقسم النص إلى مقاطع عربية ومقاطع لاتينية/رقمية حتى تأخذ كل منها اتجاهها الصحيح. */
     private fun runs(text: String, bold: Boolean = false): String {
         if (text.isEmpty()) return ""
-        val clean = text.replace(Regex("[⁦-⁩‎‏]"), "")
+        val clean = text.replace(Regex("[\u2066-\u2069\u200E\u200F]"), "")
         val sb = StringBuilder()
         val re = Regex("[A-Za-z0-9$€£.,:+\\-−%/()\\[\\]#@_=]+(?:[ ][A-Za-z0-9$€£.,:+\\-−%/()#@_=]+)*")
         var last = 0

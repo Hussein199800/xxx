@@ -155,11 +155,11 @@ fun ExplanationDialog(e: Explanation, onDismiss: () -> Unit, onOpenRef: ((String
         title = { Text(e.title, style = MaterialTheme.typography.titleLarge) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(e.result.replace("⁦", "").replace("⁩", ""), style = MaterialTheme.typography.headlineSmall.copy(textDirection = TextDirection.Content), color = c.pri)
+                Text(e.result.replace("\u2066", "").replace("\u2069", ""), style = MaterialTheme.typography.headlineSmall.copy(textDirection = TextDirection.Content), color = c.pri)
                 e.asOf?.let { Text("بتاريخ $it", style = MaterialTheme.typography.bodySmall, color = c.mute) }
                 Spacer(Modifier.height(8.dp))
                 Text("المعادلة", style = MaterialTheme.typography.titleSmall)
-                Text(e.formula.replace("⁦", "").replace("⁩", ""), style = MaterialTheme.typography.bodySmall, color = c.txt)
+                Text(e.formula.replace("\u2066", "").replace("\u2069", ""), style = MaterialTheme.typography.bodySmall, color = c.txt)
                 if (e.pending.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     StatusChip("يحتاج مراجعة (${e.pending.size})", Tone.WARN)
@@ -172,7 +172,7 @@ fun ExplanationDialog(e: Explanation, onDismiss: () -> Unit, onOpenRef: ((String
                     Text(it.label, style = MaterialTheme.typography.bodyMedium, color = c.txt)
                     Text("القيمة الأصلية: ${it.original}", style = MaterialTheme.typography.bodySmall, color = c.mute)
                     it.rate?.let { r -> Text("السعر: $r — ${it.rateSource ?: ""} — ${it.rateDate ?: ""}", style = MaterialTheme.typography.bodySmall, color = c.mute) }
-                    it.value?.let { v -> Text("= ${v.replace("⁦", "").replace("⁩", "")}", style = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content), color = c.txt) }
+                    it.value?.let { v -> Text("= ${v.replace("\u2066", "").replace("\u2069", "")}", style = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content), color = c.txt) }
                     it.note?.let { n -> Text(n, style = MaterialTheme.typography.bodySmall, color = c.warn) }
                     if (onOpenRef != null) it.refIds.forEach { id -> TextButton(onClick = { onOpenRef(id) }) { Text("افتح السجل المرتبط") } }
                 }

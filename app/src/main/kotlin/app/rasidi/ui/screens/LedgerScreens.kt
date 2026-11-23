@@ -104,7 +104,7 @@ fun AccountDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { DateField(from, { from = it }, "من", Modifier.weight(1f)); DateField(to, { to = it }, "إلى", Modifier.weight(1f)) }
         Spacer(Modifier.height(Sp.xs))
         RCard {
-            KeyValue("الرصيد قبل الفترة", Fmt.money(st.opening, false))
+            KeyValue("الرصيد قبل الفترة", Fmt.money(st.opening))
             st.lines.reversed().take(100).forEach { (e, run) ->
                 HorizontalDivider(color = c.line)
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -117,7 +117,7 @@ fun AccountDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
             }
             if (st.lines.size > 100) Text("يظهر آخر 100 قيد؛ التصدير يشمل الكل (${st.lines.size})", color = c.mute, style = MaterialTheme.typography.bodySmall)
             HorizontalDivider(color = c.line)
-            KeyValue("الرصيد في نهاية الفترة", Fmt.money(st.closing, false))
+            KeyValue("الرصيد في نهاية الفترة", Fmt.money(st.closing))
         }
         Spacer(Modifier.height(Sp.sm))
         Row(horizontalArrangement = Arrangement.spacedBy(Sp.xs)) {
@@ -134,7 +134,7 @@ fun AccountDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
                 AmountField(counted, a.currency, "المبلغ المعدود")
                 counted.parse(a.currency)?.let { m ->
                     val diff = m - view.balance(a, today)
-                    Text("الفرق: ${Fmt.money(diff, false)}", color = if (diff.isZero) c.pri else c.warn, style = MaterialTheme.typography.titleMedium)
+                    Text("الفرق: ${Fmt.money(diff)}", color = if (diff.isZero) c.pri else c.warn, style = MaterialTheme.typography.titleMedium)
                     PrimaryButton("سجّل التسوية", enabled = !diff.isZero, onClick = { vm.launchSafe("سُجّلت التسوية") { vm.repo.adjustToCount(id, m.minor, today, rid); count = false } })
                 }
             }
@@ -156,7 +156,7 @@ fun GoldScreen(vm: MainViewModel, nav: NavController) {
     val rate = (app.rasidi.core.money.RateBook(view.rates).lookup(Rate.GOLD24_GRAM, vm.today()) as? app.rasidi.core.money.RateLookup.Exact)?.rate
         ?: view.rates.filter { it.unit == Rate.GOLD24_GRAM && !it.date.isAfter(vm.today()) }.maxByOrNull { it.date }
     ScreenScaffold("الذهب", { nav.popBackStack() }, actions = { IconButton(onClick = { adding = !adding }, Modifier.size(48.dp)) { Icon(Icons.Filled.Add, "قطعة جديدة", tint = c.gold) } },
-        sub = rate?.let { "سعر غرام عيار 24: ${Fmt.plain(it.entered)} USD (${it.date})" } ?: "لا يوجد سعر لغرام الذهب؛ أضفه من «الأسعار»") {
+        sub = rate?.let { "سعر غرام عيار 24: ${Fmt.plain(it.entered)} USD (\u2066\u2066${it.date}\u2069\u2069)" } ?: "لا يوجد سعر لغرام الذهب؛ أضفه من «الأسعار»") {
         if (adding) NewGoldCard(vm) { adding = false }
         view.gold.filter { !it.archived }.forEach { h ->
             val g = GoldCalc.grams(h, view.goldMoves)
