@@ -90,6 +90,10 @@ for p in sorted(glob.glob(os.path.join(root, "*.pdf"))):
     subprocess.run(["pdftoppm", "-r", "60", "-png", "-f", "1", "-l", "2", p, os.path.join(out, "pdf")])
 
 passed = sum(1 for r in results if r[0] == "PASS")
+if not results:
+    # لا ملفات للفحص: فشل صريح بدل «0/0 ناجح»
+    print("لم يُعثر على أي عينة في", root, "— شغّل ./gradlew :core:test أولاً")
+    sys.exit(2)
 lines = [f"| {s} | {n} | {d} |" for s, n, d in results]
 report = "| النتيجة | الفحص | التفاصيل |\n|---|---|---|\n" + "\n".join(lines) + f"\n\n**{passed}/{len(results)} ناجح**\n"
 open(os.path.join(out, "verify-samples.md"), "w").write(report)

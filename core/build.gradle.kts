@@ -11,6 +11,9 @@ dependencies {
     testImplementation(libs.junit)
 }
 tasks.test {
+    // الاختبار يولّد عينات التقارير في samples/: لا يُؤخذ من الذاكرة المؤقتة حتى تُعاد كتابتها دائماً
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
     // samples are written here by ReportSamplesTest
     systemProperty("rasidi.samples.dir", rootProject.layout.projectDirectory.dir("samples").asFile.absolutePath)
     environment("LC_ALL", "C.UTF-8"); environment("LANG", "C.UTF-8")
