@@ -1,4 +1,4 @@
-# نتائج التحقق — رصيدي 1.3.0-beta1
+# نتائج التحقق — رصيدي 1.4.0-beta1
 
 تاريخ التحقق: 2026-11-23. كل ما يلي جرى فعلاً في بيئة البناء، ما لم يُذكر غير ذلك صراحة.
 
@@ -18,12 +18,12 @@
 python3 scripts/verify_samples.py samples build/verify
 ./gradlew :app:connectedDebugAndroidTest     # يحتاج جهازاً أو محاكياً
 ```
-النتيجة: **100 اختبار، 0 إخفاق**. lint: 0 أخطاء، تحذيران تنسيقيان (ModifierParameter). البناء الكامل من الصفر في 3 دقائق و49 ثانية.
+النتيجة: **103 اختبارات، 0 إخفاق**. lint: 0 أخطاء، تحذيران تنسيقيان (ModifierParameter). البناء الكامل من الصفر في 3 دقائق و49 ثانية.
 
 ## الحزم
 | الملف | الحجم | SHA-256 |
 |---|---|---|
-| `dist/rasidi-1.3.0-beta1.apk` (`app.rasidi.ledger.beta`، versionCode 4، R8، موقّع بمفتاح الاختبار المشترك) | 3.5 MB | `7a616baf89a5bd38ba9ee5cb5357d8bff423402f7a9e8e84510d5dc2dca728c1` |
+| `dist/rasidi-1.4.0-beta1.apk` (`app.rasidi.ledger.beta`، versionCode 5، R8، موقّع بمفتاح الاختبار المشترك) | 3.5 MB | `38e4a1a6a2f3d3bf178b5394fa083c0a7c0a6ccc4b7805f1b11dd48d8b5395fc` |
 | `app-debug.apk` (`app.rasidi.ledger.debug`، غير مصغّر، يُولَّد في CI) | 20 MB | يُطبع في CI |
 
 بصمة مفتاح الاختبار: SHA-1 `8D:E3:AE:52:07:3C:6D:B6:DB:31:44:0C:2F:21:26:65:C1:00:AA:2E`. الإصدار الموقّع (`app.rasidi.ledger`) **ينتظر مفتاح التوقيع الفعلي** (انظر README وCI).
@@ -66,6 +66,11 @@ python3 scripts/verify_samples.py samples build/verify
 - الأخطاء المفهومة (العنوان والحل والإجراء): `ErrorHelpTest`.
 - التقرير الرسمي في PDF وWord (الترويسة، رقم التقرير، صندوق المعلومات، بطاقات الملخص، كتلة الاعتماد): العينات في `samples/` فُتحت بـ pdfplumber وLibreOffice، وفُحصت بالنظر.
 - الشرح و«ما الجديد»: صور `docs/screens/23-help-guide.png` و`24-whats-new.png`. الجولة التعريفية نافذة منفصلة لا تلتقطها صور Robolectric، فلم تُصوَّر.
+
+### تبويب الحسابات (1.4) — ✅
+- كل الحسابات حتى ذات الرصيد صفر، والتقسيم مدينة (لي معها) ودائنة (لها معي)، وإجمالي كل قسم بكل عملة: `PartiesTest`.
+- **ترحيل 2 ← 3**: قاعدة v2 حقيقية فيها دينان لشخص واحد (أحدهما باسم فيه مسافة زائدة) تصير حساباً واحداً بمعرّف ثابت: `HouseholdRepoTest.migrationFromV2CreatesParties`. ترحيل النسخ `.rasidi` من 2 إلى 3: `PartiesTest.v2BackupGetsPartiesFromDebtNames`.
+- إضافة حساب برصيد سابق، ومنع تكرار الاسم، وإعادة التسمية تنتقل إلى الديون: `HouseholdRepoTest.addPartyWithOpeningAndRename`.
 
 ### 4. الجرد والزكاة — ✅
 - مثال القبول: 11,300 ← وعاء 11,500 ← **287.50 USD**، ودفعات 120 USD و2,000 TRY و14,100 SYP ⇒ «المتبقي 0.00»: `ZakatTest.acceptanceExample`، وعبر Room والنسخ في `BackupRestoreTest`.
@@ -113,7 +118,7 @@ txns=10077 entries=10099
 | | |
 |---|---|
 | الجهاز | محاكي Android 14 (API 34، google_apis، x86_64، Pixel 5) **بمحاكاة برمجية كاملة (TCG، بلا KVM)** |
-| الحزمة | `dist/rasidi-1.3.0-beta1.apk` (`app.rasidi.ledger.beta`، versionCode 4، R8، موقّع بمفتاح الاختبار المشترك) | 3.5 MB | `7a616baf89a5bd38ba9ee5cb5357d8bff423402f7a9e8e84510d5dc2dca728c1` |
+| الحزمة | `dist/rasidi-1.4.0-beta1.apk` (`app.rasidi.ledger.beta`، versionCode 5، R8، موقّع بمفتاح الاختبار المشترك) | 3.5 MB | `38e4a1a6a2f3d3bf178b5394fa083c0a7c0a6ccc4b7805f1b11dd48d8b5395fc` |
 
 ما تحقق فعلاً على المحاكي (على نسخة 1.0.0-beta1، أما نسخة 1.1.0 فلم تُجرَّب على محاكٍ):
 - ✅ التثبيت نجح (`adb install` ← Success).

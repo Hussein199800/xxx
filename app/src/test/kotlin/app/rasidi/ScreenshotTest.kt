@@ -55,8 +55,8 @@ class ScreenshotTest {
 
     @Test fun home() = shoot("01-home-light", Routes.HOME)
     @Test fun homeDark() { RuntimeEnvironment.setQualifiers("+night"); shoot("02-home-dark", Routes.HOME, "dark") }
-    @Test fun debts() = shoot("03-debts-light", Routes.DEBTS)
-    @Test fun debtsDark() = shoot("04-debts-dark", Routes.DEBTS, "dark")
+    @Test fun debts() = shoot("03-accounts-light", Routes.ACC_TAB)
+    @Test fun debtsDark() = shoot("04-accounts-dark", Routes.ACC_TAB, "dark")
     @Test fun inventory() = shoot("05-inventory-light", Routes.INVENTORY)
     @Test fun backup() = shoot("06-backup-light", Routes.BACKUP)
     @Test fun transactions() = shoot("07-transactions-light", Routes.TXNS)
@@ -75,5 +75,5 @@ class ScreenshotTest {
     @Test fun addExpense() = shoot("09-add-expense-light", Routes.add("expense"))
     @Test fun largeFont() = shoot("10-home-large-font", Routes.HOME, "light", 1.3f)
     @Test @Config(qualifiers = "w800dp-h1280dp-xhdpi") fun tablet() = shoot("11-home-tablet", Routes.HOME)
-    @Test @Config(qualifiers = "w320dp-h640dp-xhdpi") fun narrowPhone() = shoot("12-debts-narrow", Routes.DEBTS, "light", 1.15f)
+    @Test @Config(qualifiers = "w320dp-h640dp-xhdpi") fun narrowPhone() = shoot("12-accounts-narrow", Routes.ACC_TAB, "light", 1.15f)
 }

@@ -30,7 +30,7 @@ data class BackupJobEntity(
         GoldHoldingEntity::class, GoldMoveEntity::class, RateEntity::class,
         InventoryEntity::class, InventoryLineEntity::class, ZakatEstimateEntity::class, ZakatPaymentEntity::class,
         SettingEntity::class, AuditEntity::class, BackupJobEntity::class,
-        MemberEntity::class, BudgetEntity::class, RecurringEntity::class,
+        MemberEntity::class, BudgetEntity::class, RecurringEntity::class, PartyEntity::class,
     ],
     version = RasidiDatabase.VERSION,
     exportSchema = true,
@@ -40,12 +40,12 @@ abstract class RasidiDatabase : RoomDatabase() {
     abstract fun jobs(): BackupJobDao
 
     companion object {
-        const val VERSION = 2
+        const val VERSION = 3
         const val LEDGER_DB = "rasidi.db"
         const val DEMO_DB = "rasidi-demo.db"
 
         /** قائمة الترحيلات. كل ترحيل جديد يُضاف هنا مع اختبار في MigrationTest. */
-        val MIGRATIONS: Array<androidx.room.migration.Migration> = arrayOf(MIGRATION_1_2)
+        val MIGRATIONS: Array<androidx.room.migration.Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
 
         fun open(ctx: Context, name: String): RasidiDatabase =
             Room.databaseBuilder(ctx, RasidiDatabase::class.java, name)
@@ -73,5 +73,20 @@ val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `recurring` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `kind` TEXT NOT NULL, `accountId` TEXT NOT NULL, `categoryId` TEXT NOT NULL, `amountMinor` INTEGER NOT NULL, `dayOfMonth` INTEGER NOT NULL, `memberId` TEXT, `active` INTEGER NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`accountId`) REFERENCES `accounts`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_recurring_accountId` ON `recurring` (`accountId`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_recurring_categoryId` ON `recurring` (`categoryId`)")
+    }
+}
+
+/** 2 → 3: جدول الحسابات (الأشخاص)، ويُملأ من أسماء الديون الموجودة بمعرّفات ثابتة. لا يمسّ أي بيانات. */
+val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `parties` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `phone` TEXT NOT NULL, `note` TEXT NOT NULL, `archived` INTEGER NOT NULL, `createdAtUtc` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_parties_name` ON `parties` (`name`)")
+        val names = mutableListOf<String>()
+        db.query("SELECT DISTINCT TRIM(party) FROM debts").use { c -> while (c.moveToNext()) c.getString(0)?.takeIf { it.isNotBlank() }?.let(names::add) }
+        names.distinct().forEach { n ->
+            db.execSQL("INSERT OR IGNORE INTO parties (id, name, phone, note, archived, createdAtUtc) VALUES (?, ?, '', '', 0, 0)", arrayOf<Any>(app.rasidi.core.backup.PartyIds.forName(n), n))
+        }
+        // توحيد الأسماء المخزّنة في الديون على الصيغة المقصوصة نفسها
+        db.execSQL("UPDATE debts SET party = TRIM(party)")
     }
 }

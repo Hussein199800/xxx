@@ -1,6 +1,6 @@
 # نموذج البيانات
 
-المصدر الوحيد للكيانات: `core/src/main/kotlin/app/rasidi/core/data/Entities.kt`. الكيانات نفسها تُستخدم في Room وفي لقطة النسخة الاحتياطية. المخططات المصدَّرة: `app/schemas/app.rasidi.data.RasidiDatabase/{1,2}.json`. الترحيل 1 ← 2 في `RasidiDatabase.kt` (`MIGRATION_1_2`) ويقابله `BackupMigrations` للنسخ القديمة.
+المصدر الوحيد للكيانات: `core/src/main/kotlin/app/rasidi/core/data/Entities.kt`. الكيانات نفسها تُستخدم في Room وفي لقطة النسخة الاحتياطية. المخططات المصدَّرة: `app/schemas/app.rasidi.data.RasidiDatabase/{1,2,3}.json`. الترحيلات 1 ← 2 و2 ← 3 في `RasidiDatabase.kt` ويقابله `BackupMigrations` للنسخ القديمة.
 
 | الجدول | المفتاح والعلاقات | ملاحظات |
 |---|---|---|
@@ -21,6 +21,7 @@
 | `members` (v2) | id | أفراد البيت؛ `txns.memberId` اختياري |
 | `budgets` (v2) | id → categories، فريد (categoryId,currency) | حد شهري لفئة بعملتها |
 | `recurring` (v2) | id → accounts، categories | متكرر شهري؛ يُسجَّل بتأكيد بمعرّف طلب `rec:id:yyyy-MM` فلا يتكرر في الشهر نفسه |
+| `parties` (v3) | id، اسم فريد | حساب الشخص (اسم، هاتف، ملاحظة، أرشفة)؛ يوجد ولو برصيد صفر. الديون ترتبط به بالاسم، وإعادة التسمية تنتقل إليها |
 | `backup_jobs` | jobId | **محلي فقط**؛ لا يدخل في النسخة، ويُمسح بعد الاستعادة |
 
 ## صيغة ملف `.rasidi`

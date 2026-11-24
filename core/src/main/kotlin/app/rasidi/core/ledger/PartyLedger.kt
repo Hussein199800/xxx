@@ -16,7 +16,12 @@ object PartyLedger {
     data class Statement(val party: String, val currency: String, val prior: Money, val lines: List<Line>, val totalOn: Money, val totalFor: Money, val closing: Money) {
         val closingLabel get() = if (closing.minor > 0) "الرصيد عليه" else if (closing.minor < 0) "الرصيد له" else "الرصيد"
     }
-    data class PartySummary(val party: String, val balances: Map<String, Money>, val lastDate: LocalDate)
+    data class PartySummary(val party: String, val balances: Map<String, Money>, val lastDate: LocalDate?, val phone: String = "", val note: String = "", val id: String? = null) {
+        /** مدين (لي معه) إن كان له رصيد موجب بأي عملة، ودائن (له معي) إن كان له رصيد سالب. */
+        val debtor get() = balances.values.any { it.minor > 0 }
+        val creditor get() = balances.values.any { it.minor < 0 }
+        val settled get() = balances.values.all { it.isZero }
+    }
 
     private data class Move(val date: LocalDate, val signed: Money, val details: String, val txnId: String?, val createdAt: Long)
 
@@ -36,10 +41,28 @@ object PartyLedger {
         return out.sortedWith(compareBy({ it.date }, { it.createdAt }))
     }
 
-    fun parties(v: LedgerView): List<PartySummary> = v.debts.map { it.party.trim() }.distinct().map { p ->
-        val ms = moves(v, p)
-        PartySummary(p, ms.groupBy { it.signed.currency.code }.mapValues { (c, l) -> l.fold(Money.zero(Currencies.of(c))) { a, m -> a + m.signed } }, ms.maxOf { it.date })
-    }.sortedByDescending { it.lastDate }
+    /** كل الحسابات: من جدول الحسابات (ولو برصيد صفر) ومن أسماء الديون. */
+    fun parties(v: LedgerView, includeArchived: Boolean = false): List<PartySummary> {
+        val table = v.s.parties.filter { includeArchived || !it.archived }.associateBy { it.name.trim() }
+        val archived = v.s.parties.filter { it.archived }.map { it.name.trim() }.toSet()
+        val names = (table.keys + v.debts.map { it.party.trim() }).distinct().filter { includeArchived || it !in archived }
+        return names.map { p ->
+            val ms = moves(v, p)
+            val e = table[p]
+            PartySummary(p, ms.groupBy { it.signed.currency.code }.mapValues { (c, l) -> l.fold(Money.zero(Currencies.of(c))) { a, m -> a + m.signed } },
+                ms.maxOfOrNull { it.date }, e?.phone.orEmpty(), e?.note.orEmpty(), e?.id)
+        }.sortedWith(compareBy<PartySummary> { it.settled }.thenByDescending { it.lastDate ?: LocalDate.MIN }.thenBy { it.party })
+    }
+
+    /** إجمالي المدين (لي معها) والدائن (لها معي) بكل عملة. */
+    fun totals(list: List<PartySummary>): Pair<Map<String, Money>, Map<String, Money>> {
+        val deb = HashMap<String, Money>(); val cred = HashMap<String, Money>()
+        list.forEach { p -> p.balances.forEach { (c, m) ->
+            if (m.minor > 0) deb[c] = (deb[c] ?: Money.zero(m.currency)) + m
+            if (m.minor < 0) cred[c] = (cred[c] ?: Money.zero(m.currency)) + (-m)
+        } }
+        return deb to cred
+    }
 
     fun currencies(v: LedgerView, party: String) = moves(v, party).map { it.signed.currency.code }.distinct()
 

@@ -240,18 +240,17 @@ fun TransactionsScreen(vm: MainViewModel, nav: NavController, initialPeriod: Str
 }
 
 @Composable
-fun DebtsScreen(vm: MainViewModel, nav: NavController) {
+fun DebtsScreen(vm: MainViewModel, nav: NavController, asPage: Boolean = false) {
     val c = LocalR.current
     val rows by vm.debts.collectAsStateWithLifecycle()
     var dir by remember { mutableStateOf(DebtDirection.OWED_TO_ME) }
     var showSettled by remember { mutableStateOf(false) }
     var byPerson by rememberSaveable { mutableStateOf(false) }
     val list = rows.filter { it.debt.direction == dir && !it.archived && (showSettled || it.status != DebtStatus.SETTLED) }.sortedWith(compareBy({ it.status == DebtStatus.SETTLED }, { it.nextDue ?: LocalDate.MAX }))
+    Column(Modifier.fillMaxSize().background(LocalR.current.bg)) {
+    if (asPage) PageTopBar("الديون والأقساط", { nav.popBackStack() })
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Sp.md).padding(bottom = 170.dp)) {
-        BigTitle("الديون")
-        ChipRow(listOf(false, true), byPerson, { if (it) "الأشخاص وكشوفهم" else "الديون" }, { byPerson = it })
-        Spacer(Modifier.height(Sp.xs))
-        if (byPerson) { PartiesList(vm, nav); return@Column }
+        if (!asPage) BigTitle("الديون")
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             SegmentedButton(dir == DebtDirection.OWED_TO_ME, { dir = DebtDirection.OWED_TO_ME }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("لي عند الناس") }
             SegmentedButton(dir == DebtDirection.I_OWE, { dir = DebtDirection.I_OWE }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("عليّ للناس") }
@@ -288,6 +287,7 @@ fun DebtsScreen(vm: MainViewModel, nav: NavController) {
             }
         }
     }
+}
 }
 
 

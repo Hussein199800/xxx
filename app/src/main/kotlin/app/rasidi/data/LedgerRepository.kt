@@ -47,6 +47,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
             dao.settings().filter { it.key in Snapshot.BACKUP_SETTING_KEYS },
             if (includeAudit) dao.audit() else emptyList(),
             dao.members(), dao.budgets(), dao.recurring(),
+            dao.parties(),
         )
     }
 
@@ -165,6 +166,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         if (installments.isNotEmpty() && installments.sumOf { it.second } != principalMinor) throw LedgerException("مجموع الأقساط يجب أن يساوي أصل الدين")
         existing(requestId)?.let { t -> return dao.txn(t)?.debtId ?: t }
         return write {
+            ensureParty(party)
             val id = uuid()
             var txnId: String? = null
             if (cashAccountId != null) {
@@ -361,6 +363,35 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         }
     }
 
+    // ---------------- الحسابات (الأشخاص) ----------------
+    private suspend fun ensureParty(name: String) {
+        val n = name.trim()
+        if (dao.parties().none { it.name == n }) dao.upsertParty(PartyEntity(app.rasidi.core.backup.PartyIds.forName(n), n, createdAtUtc = clock()))
+    }
+
+    /**
+     * حساب جديد (مثل «إضافة حساب جديد»): الاسم والهاتف والملاحظة، ورصيد افتتاحي اختياري
+     * يُسجَّل ديناً سابقاً دون حركة نقدية: [owedToMe] = «لي معه» (مدين) وإلا «له معي» (دائن).
+     */
+    suspend fun addParty(name: String, phone: String, note: String, openingMinor: Long, currency: CurrencyDef, owedToMe: Boolean, date: LocalDate, requestId: String): String {
+        val n = name.trim()
+        if (n.isBlank()) throw LedgerException("اسم الحساب مطلوب")
+        if (dao.parties().any { it.name == n }) throw LedgerException("يوجد حساب بالاسم «$n»")
+        write { dao.upsertParty(PartyEntity(app.rasidi.core.backup.PartyIds.forName(n), n, phone.trim(), note.trim(), false, clock())) }
+        if (openingMinor > 0) addDebt(n, if (owedToMe) DebtDirection.OWED_TO_ME else DebtDirection.I_OWE, openingMinor, currency, date, null, emptyList(), "رصيد سابق", null, null, requestId)
+        return n
+    }
+
+    /** تعديل الحساب؛ تغيير الاسم ينتقل إلى ديونه وحركاته في معاملة واحدة. */
+    suspend fun updateParty(old: PartyEntity, name: String, phone: String, note: String, archived: Boolean = old.archived) = write {
+        val n = name.trim()
+        if (n.isBlank()) throw LedgerException("اسم الحساب مطلوب")
+        if (n != old.name && dao.parties().any { it.name == n }) throw LedgerException("يوجد حساب بالاسم «$n»")
+        dao.upsertParty(old.copy(name = n, phone = phone.trim(), note = note.trim(), archived = archived))
+        if (n != old.name) { dao.renameDebtParty(old.name, n); dao.renameTxnParty(old.name, n) }
+        audit("party", old.id, "update", if (n != old.name) "rename ${old.name} → $n" else "edit")
+    }
+
     // ---------------- البيت: الأفراد والميزانيات والمتكررات ----------------
     suspend fun saveMember(m: MemberEntity) = write { require(m.name.isNotBlank()) { "الاسم مطلوب" }; dao.upsertMember(m.copy(name = m.name.trim())) }
     suspend fun saveBudget(categoryId: String, currency: CurrencyDef, limitMinor: Long) = write {
@@ -430,8 +461,8 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         dao.clearRecurring(); dao.clearBudgets()
         dao.clearZakatPayments(); dao.clearZakatEstimates(); dao.clearInventoryLines(); dao.clearInventories()
         dao.clearDebtPayments(); dao.clearInstallments(); dao.clearGoldMoves(); dao.clearEntries(); dao.clearTxns()
-        dao.clearDebts(); dao.clearGoldHoldings(); dao.clearRates(); dao.clearCategories(); dao.clearAccounts(); dao.clearSettings(); dao.clearAudit(); dao.clearMembers()
-        dao.insertMembers(s.members)
+        dao.clearDebts(); dao.clearGoldHoldings(); dao.clearRates(); dao.clearCategories(); dao.clearAccounts(); dao.clearSettings(); dao.clearAudit(); dao.clearMembers(); dao.clearParties()
+        dao.insertMembers(s.members); dao.insertParties(s.parties)
         dao.insertAccounts(s.accounts); dao.insertCategories(s.categories); dao.insertTxns(s.txns); dao.insertEntries(s.entries)
         dao.insertDebts(s.debts); dao.insertInstallments(s.installments); dao.insertDebtPayments(s.debtPayments)
         dao.insertGoldHoldings(s.goldHoldings); dao.insertGoldMoves(s.goldMoves); dao.insertRates(s.rates)

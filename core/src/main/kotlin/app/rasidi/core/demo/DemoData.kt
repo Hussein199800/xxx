@@ -99,6 +99,12 @@ object DemoData {
             debts = debts, installments = inst, debtPayments = payments,
             goldHoldings = gold, goldMoves = goldMoves, rates = rates,
             settings = listOf(SettingEntity("ui.theme", "system"), SettingEntity("profile.name", "بيت أبو محمد"), SettingEntity("profile.city", "حلب، سوريا")),
+            parties = listOf(
+                PartyEntity(app.rasidi.core.backup.PartyIds.forName("أبو سامر"), "أبو سامر", "+963 911 000 001"),
+                PartyEntity(app.rasidi.core.backup.PartyIds.forName("محل الأجهزة"), "محل الأجهزة", "+90 555 000 0002"),
+                PartyEntity(app.rasidi.core.backup.PartyIds.forName("خالد"), "خالد"),
+                PartyEntity(app.rasidi.core.backup.PartyIds.forName("أم علي"), "أم علي", note = "جارة — حساب بلا رصيد بعد"),
+            ),
             members = listOf(MemberEntity("mem-1", "أبو محمد", sort = 1), MemberEntity("mem-2", "أم محمد", sort = 2), MemberEntity("mem-3", "محمد", sort = 3)),
             budgets = listOf(
                 BudgetEntity("bud-food", "cat-food", "TRY", 400_000),

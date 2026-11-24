@@ -28,6 +28,8 @@ data class Snapshot(
     val members: List<MemberEntity> = emptyList(),
     val budgets: List<BudgetEntity> = emptyList(),
     val recurring: List<RecurringEntity> = emptyList(),
+    // الإصدار 3
+    val parties: List<PartyEntity> = emptyList(),
 ) {
     fun counts(): Map<String, Int> = linkedMapOf(
         "accounts" to accounts.size, "categories" to categories.size, "txns" to txns.size, "entries" to entries.size,
@@ -37,6 +39,7 @@ data class Snapshot(
         "zakatEstimates" to zakatEstimates.size, "zakatPayments" to zakatPayments.size,
         "settings" to settings.size, "audit" to audit.size,
         "members" to members.size, "budgets" to budgets.size, "recurring" to recurring.size,
+        "parties" to parties.size,
     )
 
     /** نسخة مرتّبة حتمياً لحساب البصمة ومقارنة المحتوى. */
@@ -47,6 +50,7 @@ data class Snapshot(
         inventories.sortedBy { it.id }, inventoryLines.sortedBy { it.id }, zakatEstimates.sortedBy { it.id },
         zakatPayments.sortedBy { it.id }, settings.sortedBy { it.key }, audit.sortedBy { it.id },
         members.sortedBy { it.id }, budgets.sortedBy { it.id }, recurring.sortedBy { it.id },
+        parties.sortedBy { it.id },
     )
 
     /** بصمة محتوى اللقطة (SHA-256 بالست عشري) — مستقلة عن ترتيب الصفوف. */

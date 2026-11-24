@@ -67,6 +67,9 @@ object SnapshotValidator {
             if (r.accountId !in acc) p += "متكرر بحساب مفقود"; if (r.categoryId !in cat) p += "متكرر بفئة مفقودة"
             if (r.dayOfMonth !in 1..31) p += "يوم متكرر غير صالح"; if (r.memberId != null && r.memberId !in members) p += "متكرر بفرد مفقود"
         }
+        uniq("parties", s.parties) { it.id }; uniq("parties.name", s.parties) { it.name.trim() }
+        val partyNames = s.parties.map { it.name.trim() }.toSet()
+        if (s.parties.isNotEmpty()) s.debts.forEach { if (it.party.trim() !in partyNames) p += "دين لشخص بلا حساب: ${it.party}" }
         s.settings.forEach { if (it.key !in Snapshot.BACKUP_SETTING_KEYS) p += "إعداد غير مسموح في النسخة: ${it.key}" }
         return p.distinct()
     }

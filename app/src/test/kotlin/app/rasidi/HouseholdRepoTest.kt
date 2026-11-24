@@ -43,6 +43,51 @@ class HouseholdRepoTest {
         assertTrue(b.over); assertEquals(Money.of("600", Currencies.TRY), b.spent)
     }
 
+    /** قاعدة v2 حقيقية فيها دينان لشخص واحد (باسم فيه مسافة زائدة) ⇒ v3: حساب واحد بمعرّف ثابت والاسم موحّد. */
+    @Test fun migrationFromV2CreatesParties() = runBlocking {
+        val ctx = TestUtil.ctx
+        ctx.deleteDatabase("v2.db")
+        val json = Json.parseToJsonElement(File(System.getProperty("rasidi.schemas.dir")!!, "app.rasidi.data.RasidiDatabase/2.json").readText()).jsonObject["database"]!!.jsonObject
+        val helper = FrameworkSQLiteOpenHelperFactory().create(SupportSQLiteOpenHelper.Configuration.builder(ctx).name("v2.db").callback(object : SupportSQLiteOpenHelper.Callback(2) {
+            override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                json["entities"]!!.jsonArray.forEach { e ->
+                    val o = e.jsonObject; val n = o["tableName"]!!.jsonPrimitive.content
+                    db.execSQL(o["createSql"]!!.jsonPrimitive.content.replace("\${TABLE_NAME}", n))
+                    o["indices"]?.jsonArray?.forEach { i -> db.execSQL(i.jsonObject["createSql"]!!.jsonPrimitive.content.replace("\${TABLE_NAME}", n)) }
+                }
+                json["setupQueries"]!!.jsonArray.forEach { db.execSQL(it.jsonPrimitive.content) }
+            }
+            override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+        }).build())
+        helper.writableDatabase.apply {
+            execSQL("INSERT INTO debts (id,party,direction,principalMinor,currency,date,dueDate,note,txnId,archived,createdAtUtc) VALUES ('d1','خالد ','I_OWE',100,'USD','2026-01-01',NULL,'',NULL,0,0)")
+            execSQL("INSERT INTO debts (id,party,direction,principalMinor,currency,date,dueDate,note,txnId,archived,createdAtUtc) VALUES ('d2','خالد','I_OWE',50,'USD','2026-02-01',NULL,'',NULL,0,0)")
+        }
+        helper.close()
+        val db = RasidiDatabase.open(ctx, "v2.db")
+        val s = TestUtil.repo(db).snapshot()
+        assertEquals(listOf("خالد"), s.parties.map { it.name })
+        assertEquals(app.rasidi.core.backup.PartyIds.forName("خالد"), s.parties.single().id)
+        assertTrue(s.debts.all { it.party == "خالد" })
+        assertTrue(app.rasidi.core.backup.SnapshotValidator.validate(s).isEmpty())
+        db.close()
+    }
+
+    @Test fun addPartyWithOpeningAndRename() = runBlocking {
+        val repo = TestUtil.repo(TestUtil.memDb()); repo.ensureCategories()
+        repo.addParty("أم علي", "+963 900", "", 0, Currencies.USD, true, d, "p1")
+        repo.addParty("حليمة الخالد", "", "", 500_00, Currencies.USD, true, d, "p2")
+        var v = repo.view()
+        val ps = app.rasidi.core.ledger.PartyLedger.parties(v)
+        assertTrue(ps.first { it.party == "أم علي" }.settled)
+        assertEquals(Money.of("500", Currencies.USD), ps.first { it.party == "حليمة الخالد" }.balances["USD"])
+        assertTrue(runCatching { repo.addParty("أم علي", "", "", 0, Currencies.USD, true, d, "p3") }.exceptionOrNull() is app.rasidi.data.LedgerException)
+        repo.updateParty(v.s.parties.first { it.name == "حليمة الخالد" }, "حليمة", "", "")
+        v = repo.view()
+        assertEquals("حليمة", v.debts.single().party)
+        assertTrue(app.rasidi.core.backup.SnapshotValidator.validate(v.s).isEmpty())
+    }
+
     /** يبني قاعدة v1 حقيقية من المخطط المصدَّر 1.json فيها بيانات، ثم يفتحها Room بالإصدار الحالي عبر الترحيل. */
     @Test fun migrationFromV1KeepsDataAndMatchesSchema() = runBlocking {
         val ctx = TestUtil.ctx

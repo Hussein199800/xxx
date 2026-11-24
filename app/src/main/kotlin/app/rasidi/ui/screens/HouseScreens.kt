@@ -82,7 +82,8 @@ fun MoreScreen(vm: MainViewModel, nav: NavController) {
         }
         // 3. المجموعات
         group("دفتري") {
-            ListCard("الحسابات", "${view.accounts.count { !it.archived }} حسابات · كشوف الحساب والعدّ اليدوي", Icons.Filled.AccountBalanceWallet, CardTint.green) { nav.navigate(Routes.ACCOUNTS) }
+            ListCard("الصناديق والمحافظ", "${view.accounts.count { !it.archived }} صناديق · كشف الصندوق والعدّ اليدوي", Icons.Filled.AccountBalanceWallet, CardTint.green) { nav.navigate(Routes.ACCOUNTS) }
+            ListCard("الديون والأقساط", "${view.debts.size} دين · الأقساط والاستحقاقات", Icons.Filled.Handshake, CardTint.amber) { nav.navigate(Routes.DEBTS) }
             ListCard("أفراد البيت", if (view.s.members.isEmpty()) "اعرف من صرف ماذا" else view.s.members.filter { !it.archived }.joinToString("، ") { it.name }, Icons.Filled.Groups, CardTint.sky) { nav.navigate(Routes.MEMBERS) }
             ListCard("الفئات", "${view.s.categories.count { !it.archived }} فئة · إضافة وأرشفة", Icons.Filled.Category, CardTint.slate) { nav.navigate(Routes.CATEGORIES) }
             ListCard("الذهب", "${view.gold.count { !it.archived }} قطع · الوزن الخالص والقيمة", Icons.Filled.Diamond, CardTint.amber) { nav.navigate(Routes.GOLD) }

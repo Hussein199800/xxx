@@ -343,3 +343,17 @@ data class RecurringEntity(
     val memberId: String? = null,
     val active: Boolean = true,
 )
+
+/**
+ * حساب شخص (عميل/قريب/جار…): يوجد ولو كان رصيده صفراً. الديون ترتبط به بالاسم (debts.party). (الإصدار 3)
+ */
+@Serializable
+@Entity(tableName = "parties", indices = [Index(value = ["name"], unique = true)])
+data class PartyEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val phone: String = "",
+    val note: String = "",
+    val archived: Boolean = false,
+    val createdAtUtc: Long = 0,
+)

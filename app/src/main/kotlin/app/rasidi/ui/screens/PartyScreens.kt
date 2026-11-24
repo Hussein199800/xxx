@@ -3,6 +3,7 @@ package app.rasidi.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,32 +31,150 @@ import app.rasidi.ui.theme.LocalR
 import app.rasidi.ui.theme.Sp
 import java.time.LocalDate
 
-/** قائمة الأشخاص (أطراف الديون) برصيد كل منهم: عليه أو له. */
+enum class AccFilter(val ar: String) { ALL("الكل"), DEBTOR("مدينة · لي معها"), CREDITOR("دائنة · لها معي"), SETTLED("مسدّدة"), WALLETS("الصناديق") }
+
+/**
+ * تبويب «الحسابات»: كل الحسابات حتى ذات الرصيد صفر، مقسّمة إلى
+ * مدينة (لي معها) ودائنة (لها معي)، ومعها الصناديق (المحافظ).
+ */
 @Composable
-fun PartiesList(vm: MainViewModel, nav: NavController) {
+fun AccountsTabScreen(vm: MainViewModel, nav: NavController) {
     val c = LocalR.current
     val v = vm.view.collectAsStateWithLifecycle().value ?: return
-    val parties = remember(v) { PartyLedger.parties(v) }
-    if (parties.isEmpty()) { EmptyState(Icons.Filled.Groups, "لا أشخاص بعد", "يظهر هنا كل من له أو عليه دين", "دين جديد") { nav.navigate(Routes.add("debt")) }; return }
-    parties.forEach { p ->
-        RCard(onClick = { nav.navigate(Routes.party(p.party)) }) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconBadge(Icons.Filled.Person, CardTint.sky)
-                Spacer(Modifier.width(Sp.sm))
-                Column(Modifier.weight(1f)) {
-                    Text(p.party, style = MaterialTheme.typography.titleMedium)
-                    Text("آخر حركة ${ReportDate.ar(p.lastDate)}", style = MaterialTheme.typography.bodySmall, color = c.mute)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    p.balances.values.filter { !it.isZero }.ifEmpty { p.balances.values.take(1) }.forEach { b ->
-                        Text(if (b.minor > 0) "عليه" else if (b.minor < 0) "له" else "مسدّد", style = MaterialTheme.typography.labelSmall, color = if (b.minor > 0) c.danger else c.pri)
-                        AmountText(b.abs(), style = MaterialTheme.typography.titleSmall, color = if (b.minor > 0) c.danger else c.pri)
+    val all = remember(v) { PartyLedger.parties(v) }
+    val (deb, cred) = remember(all) { PartyLedger.totals(all) }
+    var filter by rememberSaveable { mutableStateOf(AccFilter.ALL) }
+    var q by rememberSaveable { mutableStateOf("") }
+    var adding by remember { mutableStateOf(false) }
+    val list = all.filter { p ->
+        (q.isBlank() || p.party.contains(q.trim(), true) || p.phone.contains(q.trim())) && when (filter) {
+            AccFilter.ALL -> true; AccFilter.DEBTOR -> p.debtor; AccFilter.CREDITOR -> p.creditor; AccFilter.SETTLED -> p.settled; AccFilter.WALLETS -> false
+        }
+    }
+    Column(Modifier.fillMaxSize().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal = Sp.md).padding(bottom = 170.dp)) {
+        BigTitle("الحسابات", sub = "${all.size} حساب · ${v.accounts.count { !it.archived }} صناديق")
+        // بطاقتا المدين والدائن
+        Row(horizontalArrangement = Arrangement.spacedBy(Sp.sm)) {
+            RCard(Modifier.weight(1f), onClick = { filter = AccFilter.DEBTOR }, tint = if (filter == AccFilter.DEBTOR) c.priSoft else null) {
+                Text("مدينة · لي معها", style = MaterialTheme.typography.labelLarge, color = c.mute)
+                Text("${all.count { it.debtor }} حساب", style = MaterialTheme.typography.bodySmall, color = c.mute)
+                if (deb.isEmpty()) Text("—", style = MaterialTheme.typography.titleMedium, color = c.mute)
+                deb.values.forEach { AmountText(it, color = c.pri) }
+            }
+            RCard(Modifier.weight(1f), onClick = { filter = AccFilter.CREDITOR }, tint = if (filter == AccFilter.CREDITOR) c.dangerSoft else null) {
+                Text("دائنة · لها معي", style = MaterialTheme.typography.labelLarge, color = c.mute)
+                Text("${all.count { it.creditor }} حساب", style = MaterialTheme.typography.bodySmall, color = c.mute)
+                if (cred.isEmpty()) Text("—", style = MaterialTheme.typography.titleMedium, color = c.mute)
+                cred.values.forEach { AmountText(it, color = c.danger) }
+            }
+        }
+        Spacer(Modifier.height(Sp.sm))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(q, { q = it }, placeholder = { Text("ابحث بالاسم أو الهاتف") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true,
+                shape = RoundedCornerShape(18.dp), modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(Sp.xs))
+            FilledTonalButton(onClick = { adding = true }, modifier = Modifier.heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp)) { Icon(Icons.Filled.PersonAdd, "إضافة حساب") }
+        }
+        Spacer(Modifier.height(Sp.xs))
+        ChipRow(AccFilter.values().toList(), filter, { f -> when (f) {
+            AccFilter.ALL -> "الكل ${all.size}"; AccFilter.DEBTOR -> "مدينة · لي معها ${all.count { it.debtor }}"
+            AccFilter.CREDITOR -> "دائنة · لها معي ${all.count { it.creditor }}"; AccFilter.SETTLED -> "مسدّدة ${all.count { it.settled }}"
+            AccFilter.WALLETS -> "الصناديق ${v.accounts.count { !it.archived }}" } }, { filter = it })
+        Spacer(Modifier.height(Sp.sm))
+        if (filter == AccFilter.WALLETS) {
+            v.accounts.filter { !it.archived }.forEach { a ->
+                val b = v.balance(a)
+                RCard(onClick = { nav.navigate(Routes.account(a.id)) }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconBadge(Icons.Filled.AccountBalanceWallet, c.pri)
+                        Spacer(Modifier.width(Sp.sm))
+                        Column(Modifier.weight(1f)) { Text(a.name, style = MaterialTheme.typography.titleMedium); Text("${a.type.ar} · ${a.currency.nameAr}", style = MaterialTheme.typography.bodySmall, color = c.mute) }
+                        AmountText(b, signColor = b.isNegative)
                     }
+                }
+                Spacer(Modifier.height(Sp.xs))
+            }
+            SoftButton("إدارة الصناديق وإضافة صندوق", { nav.navigate(Routes.ACCOUNTS) }, Modifier.fillMaxWidth())
+        } else {
+            if (list.isEmpty()) EmptyState(Icons.Filled.Groups, if (all.isEmpty()) "لا حسابات بعد" else "لا نتائج", if (all.isEmpty()) "أضف حساباً لكل شخص تتعامل معه" else "غيّر البحث أو التصنيف", "إضافة حساب") { adding = true }
+            list.forEach { p -> PartyRow(p) { nav.navigate(Routes.party(p.party)) }; Spacer(Modifier.height(Sp.xs)) }
+            TextButton(onClick = { nav.navigate(Routes.DEBTS) }, modifier = Modifier.fillMaxWidth()) { Text("الديون والأقساط بالتفصيل") }
+        }
+    }
+    if (adding) AddPartyDialog(vm) { adding = false }
+}
+
+@Composable
+private fun PartyRow(p: PartyLedger.PartySummary, onClick: () -> Unit) {
+    val c = LocalR.current
+    RCard(onClick = onClick, contentDesc = p.party) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(46.dp).clip(androidx.compose.foundation.shape.CircleShape).background(if (p.debtor) c.priSoft else if (p.creditor) c.dangerSoft else c.soft), contentAlignment = Alignment.Center) {
+                Text(p.party.trim().take(1), style = MaterialTheme.typography.titleLarge, color = if (p.debtor) c.pri else if (p.creditor) c.danger else c.mute)
+            }
+            Spacer(Modifier.width(Sp.sm))
+            Column(Modifier.weight(1f)) {
+                Text(p.party, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(listOfNotNull(p.phone.takeIf { it.isNotBlank() }?.let { Fmt.LRI + it + Fmt.PDI }, p.lastDate?.let { "آخر حركة ${ReportDate.ar(it)}" } ?: "بلا حركات").joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = c.mute, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                val nz = p.balances.values.filter { !it.isZero }
+                if (nz.isEmpty()) StatusChip("مسدّد", Tone.OK)
+                nz.forEach { b ->
+                    Text(if (b.minor > 0) "مدين · لي معه" else "دائن · له معي", style = MaterialTheme.typography.labelSmall, color = if (b.minor > 0) c.pri else c.danger)
+                    AmountText(b.abs(), style = MaterialTheme.typography.titleSmall, color = if (b.minor > 0) c.pri else c.danger)
                 }
             }
         }
-        Spacer(Modifier.height(Sp.xs))
     }
+}
+
+/** «إضافة حساب جديد»: الاسم والهاتف والملاحظة ورصيد سابق اختياري (لي معه / له معي). */
+@Composable
+fun AddPartyDialog(vm: MainViewModel, edit: app.rasidi.core.data.PartyEntity? = null, onDone: () -> Unit) {
+    val c = LocalR.current
+    var name by rememberSaveable { mutableStateOf(edit?.name ?: "") }
+    var phone by rememberSaveable { mutableStateOf(edit?.phone ?: "") }
+    var note by rememberSaveable { mutableStateOf(edit?.note ?: "") }
+    var withOpening by rememberSaveable { mutableStateOf(false) }
+    var owedToMe by rememberSaveable { mutableStateOf(true) }
+    var cur by rememberSaveable { mutableStateOf("USD") }
+    val amount = remember { AmountState() }
+    var date by remember { mutableStateOf(vm.today()) }
+    val rid = rememberSaveable { vm.newRequestId() }
+    AlertDialog(onDismissRequest = onDone, title = { Text(if (edit == null) "إضافة حساب جديد" else "تعديل الحساب") },
+        text = {
+            Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                TextIn(name, { name = it }, "الاسم")
+                Spacer(Modifier.height(6.dp))
+                TextIn(phone, { phone = it }, "رقم الهاتف (اختياري)", keyboard = androidx.compose.ui.text.input.KeyboardType.Phone)
+                Spacer(Modifier.height(6.dp))
+                TextIn(note, { note = it }, "ملاحظة (اختياري)")
+                if (edit == null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                        Switch(withOpening, { withOpening = it }); Spacer(Modifier.width(8.dp)); Text("إضافة رصيد سابق")
+                    }
+                    if (withOpening) {
+                        ChipRow(listOf(true, false), owedToMe, { if (it) "لي معه (مدين)" else "له معي (دائن)" }, { owedToMe = it })
+                        ChipRow(listOf("USD", "TRY", "SYP", "EUR", "SYP_OLD"), cur, { Currencies.of(it).nameAr }, { cur = it })
+                        AmountField(amount, Currencies.of(cur), "الرصيد السابق")
+                        DateField(date, { date = it }, "بتاريخ")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            val m = if (withOpening) amount.parse(Currencies.of(cur)) else null
+            TextButton(enabled = name.isNotBlank() && (!withOpening || (m != null && m.minor > 0)), onClick = {
+                vm.launchSafe(if (edit == null) "أُضيف الحساب" else "حُفظ الحساب") {
+                    if (edit == null) vm.repo.addParty(name, phone, note, m?.minor ?: 0, Currencies.of(cur), owedToMe, date, rid)
+                    else vm.repo.updateParty(edit, name, phone, note)
+                    onDone()
+                }
+            }) { Text("حفظ") }
+        },
+        dismissButton = { TextButton(onClick = onDone) { Text("إلغاء", color = c.mute) } })
 }
 
 enum class StPeriod(val ar: String) { DAY("يومي"), MONTH("شهري"), YEAR("سنوي"), ALL("الكل") }
@@ -84,9 +203,33 @@ fun PartyStatementScreen(vm: MainViewModel, nav: NavController, party: String) {
     val st = remember(view, party, cur, from, to, prior) { PartyLedger.statement(view, party, cur, from, to, prior && period != StPeriod.ALL) }
     val currency = Currencies.of(cur)
     Column(Modifier.fillMaxSize().background(c.bg)) {
+        val ctx = androidx.compose.ui.platform.LocalContext.current
+        val entity = view.s.parties.firstOrNull { it.name == party.trim() }
+        var editing by remember { mutableStateOf(false) }
+        var menu by remember { mutableStateOf(false) }
         PageTopBar(party, { nav.popBackStack() }, actions = {
             IconButton(onClick = { export = !export }, Modifier.size(48.dp)) { Icon(Icons.Filled.Print, "طباعة وتصدير الكشف", tint = c.txt) }
+            Box {
+                IconButton(onClick = { menu = true }, Modifier.size(48.dp)) { Icon(Icons.Filled.MoreVert, "خيارات الحساب", tint = c.txt) }
+                DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem({ Text("دين جديد لهذا الحساب") }, { menu = false; nav.navigate(Routes.add("debt", party)) }, leadingIcon = { Icon(Icons.Filled.Handshake, null) })
+                    val open = view.debts.filter { d -> d.party.trim() == party.trim() }.firstOrNull { d -> app.rasidi.core.ledger.DebtCalc.remaining(d, view.payments).minor > 0 }
+                    if (open != null) DropdownMenuItem({ Text("سند قبض أو سداد") }, { menu = false; nav.navigate(Routes.add("payment", open.id)) }, leadingIcon = { Icon(Icons.Filled.TaskAlt, null) })
+                    if (entity != null) DropdownMenuItem({ Text("تعديل الحساب") }, { menu = false; editing = true }, leadingIcon = { Icon(Icons.Filled.Edit, null) })
+                    if (!entity?.phone.isNullOrBlank()) {
+                        DropdownMenuItem({ Text("اتصال") }, { menu = false; ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_DIAL, android.net.Uri.parse("tel:" + entity!!.phone))) }, leadingIcon = { Icon(Icons.Filled.Call, null) })
+                        DropdownMenuItem({ Text("رسالة واتساب بالرصيد") }, {
+                            menu = false
+                            val txt = "${s.get("profile.name").ifBlank { "رصيدي" }}\nكشف حساب: $party\n${st.closingLabel}: ${Fmt.number(st.closing.amount.abs(), currency.minorDigits)} $cur"
+                            val num = entity!!.phone.filter { it.isDigit() }
+                            ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://wa.me/$num?text=" + android.net.Uri.encode(txt))))
+                        }, leadingIcon = { Icon(Icons.Filled.Chat, null) })
+                    }
+                    if (entity != null) DropdownMenuItem({ Text(if (entity.archived) "إلغاء الأرشفة" else "أرشفة الحساب") }, { menu = false; vm.launchSafe { vm.repo.updateParty(entity, entity.name, entity.phone, entity.note, !entity.archived) } }, leadingIcon = { Icon(Icons.Filled.Archive, null) })
+                }
+            }
         })
+        if (editing && entity != null) AddPartyDialog(vm, entity) { editing = false; nav.popBackStack() }
         // بطاقة الفلاتر
         RCard(Modifier.padding(horizontal = Sp.md)) {
             ChipRow(StPeriod.values().toList(), period, { it.ar }, { period = it })

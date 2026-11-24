@@ -6,6 +6,9 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -37,7 +40,7 @@ object BackupFormat {
     val MAGIC = byteArrayOf('R'.code.toByte(), 'A'.code.toByte(), 'S'.code.toByte(), 'I'.code.toByte(), 'D'.code.toByte(), 'I'.code.toByte(), 0, 1)
     const val FORMAT_VERSION = 1
     /** إصدار بيانات اللقطة (يتبع مخطط Room). */
-    const val DATA_VERSION = 2
+    const val DATA_VERSION = 3
     const val MAX_FILE_BYTES = 64L * 1024 * 1024
     private const val MAX_HEADER = 16 * 1024
     private val rnd = SecureRandom()
@@ -163,6 +166,13 @@ object BackupMigrations {
             val newSnap = JsonObject(snap + mapOf("txns" to JsonArray(txns), "members" to JsonArray(emptyList()), "budgets" to JsonArray(emptyList()), "recurring" to JsonArray(emptyList())))
             JsonObject(o + ("snapshot" to newSnap))
         },
+        // 2 → 3: جدول الحسابات (الأشخاص) يُشتق من أسماء الديون، بمعرّفات ثابتة من الاسم.
+        2 to { o ->
+            val snap = o["snapshot"]!!.jsonObject
+            val names = snap["debts"]!!.jsonArray.map { it.jsonObject["party"]!!.jsonPrimitive.content.trim() }.distinct()
+            val parties = names.map { n -> buildJsonObject { put("id", PartyIds.forName(n)); put("name", n); put("phone", ""); put("note", ""); put("archived", false); put("createdAtUtc", 0L) } }
+            JsonObject(o + ("snapshot" to JsonObject(snap + ("parties" to JsonArray(parties)))))
+        },
     )
 
     fun upgrade(fromVersion: Int, payloadJson: String): String {
@@ -175,4 +185,9 @@ object BackupMigrations {
         }
         return obj.toString()
     }
+}
+
+/** معرّف ثابت لحساب الشخص مشتق من اسمه (للترحيل: النتيجة نفسها في كل مرة). */
+object PartyIds {
+    fun forName(name: String): String = "party-" + java.util.UUID.nameUUIDFromBytes(name.trim().toByteArray(Charsets.UTF_8)).toString()
 }

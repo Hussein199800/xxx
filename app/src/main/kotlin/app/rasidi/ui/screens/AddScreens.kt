@@ -29,7 +29,7 @@ fun AddScreen(vm: MainViewModel, nav: NavController, type: String, ref: String) 
     when (type) {
         "expense", "income" -> IncomeExpenseForm(vm, nav, type == "income", ref)
         "transfer" -> TransferForm(vm, nav)
-        "debt" -> DebtForm(vm, nav)
+        "debt" -> DebtForm(vm, nav, ref)
         "payment" -> DebtPaymentForm(vm, nav, ref)
         else -> IncomeExpenseForm(vm, nav, false, ref)
     }
@@ -129,11 +129,11 @@ fun TransferForm(vm: MainViewModel, nav: NavController) {
 }
 
 @Composable
-fun DebtForm(vm: MainViewModel, nav: NavController) {
+fun DebtForm(vm: MainViewModel, nav: NavController, partyRef: String = "") {
     val c = LocalR.current
     val v by vm.view.collectAsStateWithLifecycle()
     val view = v ?: return
-    var party by rememberSaveable { mutableStateOf("") }
+    var party by rememberSaveable { mutableStateOf(partyRef) }
     var dir by rememberSaveable { mutableStateOf(DebtDirection.I_OWE) }
     var cur by rememberSaveable { mutableStateOf("USD") }
     val principal = remember { AmountState() }
@@ -152,7 +152,9 @@ fun DebtForm(vm: MainViewModel, nav: NavController) {
             SegmentedButton(dir == DebtDirection.OWED_TO_ME, { dir = DebtDirection.OWED_TO_ME }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("لي") }
         }
         Spacer(Modifier.height(Sp.sm))
-        TextIn(party, { party = it }, "الطرف")
+        TextIn(party, { party = it }, "الحساب (الشخص)")
+        val names = view.s.parties.filter { !it.archived }.map { it.name }.filter { party.isBlank() || (it.contains(party.trim()) && it != party.trim()) }.take(8)
+        if (names.isNotEmpty()) ChipRow(names, null, { it }, { party = it })
         Spacer(Modifier.height(Sp.xs))
         Text("عملة الدين", style = MaterialTheme.typography.titleSmall, color = c.mute)
         ChipRow(listOf("USD", "TRY", "SYP", "EUR", "SYP_OLD") + view.accounts.map { it.currency.code }.distinct().filter { it !in listOf("USD", "TRY", "SYP", "EUR", "SYP_OLD") }, cur, { Currencies.of(it).nameAr }, { cur = it })

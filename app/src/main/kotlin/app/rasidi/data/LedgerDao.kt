@@ -24,6 +24,12 @@ interface LedgerDao {
     @Query("SELECT * FROM settings") suspend fun settings(): List<SettingEntity>
     @Query("SELECT * FROM audit_log ORDER BY atUtc DESC") suspend fun audit(): List<AuditEntity>
     @Query("SELECT * FROM members ORDER BY sort, name") suspend fun members(): List<MemberEntity>
+    @Query("SELECT * FROM parties ORDER BY name") suspend fun parties(): List<PartyEntity>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertParty(p: PartyEntity)
+    @Insert suspend fun insertParties(l: List<PartyEntity>)
+    @Query("DELETE FROM parties") suspend fun clearParties()
+    @Query("UPDATE debts SET party = :new WHERE party = :old") suspend fun renameDebtParty(old: String, new: String)
+    @Query("UPDATE txns SET party = :new WHERE party = :old") suspend fun renameTxnParty(old: String, new: String)
     @Query("SELECT * FROM budgets") suspend fun budgets(): List<BudgetEntity>
     @Query("SELECT * FROM recurring ORDER BY dayOfMonth") suspend fun recurring(): List<RecurringEntity>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertMember(m: MemberEntity)

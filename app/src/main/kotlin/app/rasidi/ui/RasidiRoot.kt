@@ -33,6 +33,7 @@ object Routes {
     const val PARTY = "party/{name}"; fun party(n: String) = "party/" + android.net.Uri.encode(n)
     const val SETTINGS_SECTION = "settings/{section}"; fun settings(sec: String) = "settings/$sec"
     const val TXNS_PERIOD = "txnsp/{period}"; fun txns(period: String) = "txnsp/$period"
+    const val ACC_TAB = "accounts-tab"
     const val HELP = "help"; const val CHANGELOG = "changelog"
     const val MEMBERS = "members"; const val BUDGETS = "budgets"; const val RECURRING = "recurring"
     const val ONBOARD = "onboard"
@@ -50,7 +51,7 @@ private val tabs = listOf(
     Tab(Routes.HOME, "الرئيسية", Icons.Filled.Home),
     Tab(Routes.TXNS, "الحركات", Icons.Filled.ReceiptLong),
     Tab(Routes.CALC, "الحاسبة", Icons.Filled.Calculate),
-    Tab(Routes.DEBTS, "الديون", Icons.Filled.Handshake),
+    Tab(Routes.ACC_TAB, "الحسابات", Icons.Filled.Groups),
     Tab(Routes.MORE, "المزيد", Icons.Filled.GridView),
 )
 
@@ -97,7 +98,8 @@ fun RasidiRoot(vm: MainViewModel, startOverride: String? = null) {
             composable(Routes.ONBOARD) { OnboardingScreen(vm, nav) }
             composable(Routes.HOME) { HomeScreen(vm, nav) }
             composable(Routes.TXNS) { TransactionsScreen(vm, nav) }
-            composable(Routes.DEBTS) { DebtsScreen(vm, nav) }
+            composable(Routes.DEBTS) { DebtsScreen(vm, nav, asPage = true) }
+            composable(Routes.ACC_TAB) { AccountsTabScreen(vm, nav) }
             composable(Routes.MORE) { MoreScreen(vm, nav) }
             composable(Routes.ADD) { e -> AddScreen(vm, nav, e.arguments?.getString("type") ?: "expense", e.arguments?.getString("ref").orEmpty()) }
             composable(Routes.TXN) { e -> TxnDetailScreen(vm, nav, e.arguments?.getString("id")!!) }
