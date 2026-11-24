@@ -72,7 +72,7 @@ object ArabicShaper {
     fun hasRtl(s: String) = s.any { it in '֐'..'ࣿ' || it in 'יִ'..'ﻼ' }
 
     /** مقاطع لاتينية/رقمية متصلة تُعزل كوحدة LTR داخل فقرة عربية (مثل «1,250.00 USD»). */
-    private val ltrRun = Regex("[A-Za-z0-9$€£][A-Za-z0-9$€£.,:+\\-−%/#@_=]*(?:[ ][A-Za-z0-9$€£.,:+\\-−%/#@_=]+)*")
+    private val ltrRun = Regex("[+A-Za-z0-9$€£][A-Za-z0-9$€£.,:+\\-−%/#@_=]*(?:[ ][A-Za-z0-9$€£.,:+\\-−%/#@_=]+)*")
 
     private fun isEmbedding(c: Char) = c in '\u202A'..'\u202E' || c == '\u200F'
 

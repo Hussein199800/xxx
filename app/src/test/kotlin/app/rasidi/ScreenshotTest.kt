@@ -31,9 +31,11 @@ class ScreenshotTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
     private val out = File(System.getProperty("rasidi.screens.dir") ?: "build/screens").apply { mkdirs() }
 
-    private fun shoot(name: String, route: String, theme: String = "light", fontScale: Float = 1f) {
+    private fun shoot(name: String, route: String, theme: String = "light", fontScale: Float = 1f, tour: Boolean = false) {
         val app = ApplicationProvider.getApplicationContext<RasidiApp>()
         app.device.onboarded = true
+        app.device.tourSeen = !tour
+        app.device.seenVersion = BuildConfig.VERSION_NAME
         if (!app.container.demo) app.switchDemo(true)
         runBlocking {
             app.container.repo.replaceAll(DemoData.snapshot(LocalDate.now()))
@@ -64,6 +66,8 @@ class ScreenshotTest {
     @Test fun recurring() = shoot("15-recurring-dark", Routes.RECURRING, "dark")
     @Test fun members() = shoot("16-members-light", Routes.MEMBERS)
     @Test fun moreLight() = shoot("17-more-light", Routes.MORE)
+    @Test fun help() = shoot("23-help-guide", Routes.HELP)
+    @Test fun changelog() = shoot("24-whats-new", Routes.CHANGELOG)
     @Test fun partyStatement() = shoot("18-party-statement-light", Routes.party("خالد"))
     @Test fun settings() = shoot("19-settings-light", Routes.SETTINGS)
     @Test fun voucher() = shoot("20-txn-voucher-light", Routes.txn(DemoData.snapshot(LocalDate.now()).txns.first { it.type == "DEBT_PAYMENT" && it.debtId == "debt-3" }.id))

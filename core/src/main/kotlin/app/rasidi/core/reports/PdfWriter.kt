@@ -26,6 +26,8 @@ class PdfWriter(private val regular: TrueTypeFont, private val bold: TrueTypeFon
         private val WARN_BG = floatArrayOf(1f, 0.957f, 0.839f)
         private val WARN_INK = floatArrayOf(0.604f, 0.357f, 0f)
         private val WHITE = floatArrayOf(1f, 1f, 1f)
+        private val GOLD = floatArrayOf(0.851f, 0.604f, 0.118f)
+        private val PAPER = floatArrayOf(0.984f, 0.980f, 0.965f)
     }
 
     private class FontUse(val font: TrueTypeFont, val key: String) {
@@ -117,14 +119,86 @@ class PdfWriter(private val regular: TrueTypeFont, private val bold: TrueTypeFon
     private val right get() = pw - m
     private val contentW get() = pw - 2 * m
 
-    private fun newPage(): Page {
+    private fun newPage(first: Boolean = false): Page {
         val p = Page(pw, ph); pages += p; cur = p
-        // ترويسة كل صفحة
-        p.text(doc.title, right, ph - m + 4, 10f, true, GREEN)
-        p.text("رصيدي", m, ph - m + 4, 10f, true, GREEN, align = -1)
-        p.line(m, ph - m - 2, right, ph - m - 2, LINE, 0.8f)
-        y = ph - m - 18
+        if (first) { y = ph - m; return p }
+        // ترويسة مختصرة لكل صفحة: الجهة المُصدِرة، وعنوان التقرير ورقمه، وخط مزدوج أخضر وذهبي
+        p.text(doc.issuerName.ifBlank { "رصيدي" }, right, ph - m + 4, 9.5f, true, GREEN)
+        p.text("${doc.title} · ${doc.reportNo}", m, ph - m + 4, 8.5f, c = MUTE, align = -1)
+        p.rect(m, ph - m - 3, contentW, 1.6f, GREEN)
+        p.rect(m, ph - m - 6, contentW, 0.7f, GOLD)
+        y = ph - m - 22
         return p
+    }
+
+    /** ترويسة الصفحة الأولى الرسمية: الجهة، العنوان، صندوق المعلومات. */
+    private fun letterhead(d: ReportDoc) {
+        val p = cur!!
+        y = ph - m - 8
+        // كتلة الجهة يميناً، والتطبيق يساراً
+        p.text(d.issuerName.ifBlank { "دفتري" }, right, y, 14f, true, GREEN)
+        if (d.issuerLine.isNotBlank()) p.text(d.issuerLine, right, y - 15, 9f, c = MUTE)
+        p.text("رصيدي", m, y, 13f, true, GREEN, align = -1)
+        p.text("تقرير مالي", m, y - 15, 9f, c = MUTE, align = -1)
+        y -= 30
+        p.rect(m, y, contentW, 2f, GREEN); p.rect(m, y - 4, contentW, 0.8f, GOLD)
+        y -= 34
+        // العنوان والفترة في الوسط
+        p.text(d.title, pw / 2, y, 20f, true, INK, align = 0); y -= 20
+        p.text(d.period, pw / 2, y, 11.5f, c = MUTE, align = 0); y -= 22
+        // صندوق المعلومات: رقم التقرير، تاريخ الإصدار، عدد البنود، ثم الفلاتر
+        val info = listOf("رقم التقرير" to d.reportNo, "تاريخ الإصدار" to d.generatedAt, "عدد البنود" to d.rowCount.toString()) + d.filters
+        val cols = 3; val rows = (info.size + cols - 1) / cols
+        val cw = contentW / cols; val rh = 30f
+        val boxH = rows * rh
+        p.box(m, y - boxH, contentW, boxH, LINE, 0.8f, PAPER)
+        info.forEachIndexed { i, (k, v) ->
+            val r = i / cols; val c = i % cols
+            val xR = right - c * cw - 8; val yy = y - r * rh - 12
+            p.text(k, xR, yy, 7.5f, c = MUTE)
+            val vv = if (width(v, fb, 9f) > cw - 16) wrap(v, fb, 9f, cw - 16).first() + "…" else v
+            p.text(vv, xR, yy - 12, 9f, true, rtl = ArabicShaper.hasRtl(vv))
+            if (c > 0) p.line(right - c * cw, y - r * rh, right - c * cw, y - (r + 1) * rh, LINE, 0.5f)
+        }
+        for (r in 1 until rows) p.line(m, y - r * rh, right, y - r * rh, LINE, 0.5f)
+        y -= boxH + 12
+        // ملاحظات منهجية (meta) بخط صغير
+        for ((k, v) in d.meta) wrap(if (k.isBlank()) v else "$k: $v", fr, 8.5f, contentW).forEach { l -> ensure(12f).text(l, right, y, 8.5f, c = MUTE); y -= 12 }
+        y -= 4
+    }
+
+    /** الملخّص كبطاقات أرقام (اثنتان أو ثلاث في الصف) بدل جدول. */
+    private fun kpis(items: List<Pair<String, Cell>>) {
+        val cols = if (items.size % 3 == 0 || items.size > 4) 3 else 2
+        val cw = (contentW - (cols - 1) * 8f) / cols; val ch = 46f
+        items.chunked(cols).forEach { row ->
+            val p = ensure(ch + 8)
+            row.forEachIndexed { i, (label, value) ->
+                val x = right - (i + 1) * cw - i * 8f
+                p.box(x, y - ch, cw, ch, LINE, 0.7f, PAPER)
+                p.rect(x + cw - 3f, y - ch, 3f, ch, GREEN)
+                p.text(label, x + cw - 10, y - 15, 8f, c = MUTE)
+                val txt = value.display()
+                val big = if (value is Cell.Num) txt else (if (width(txt, fb, 12f) > cw - 20) wrap(txt, fb, 12f, cw - 20).first() + "…" else txt)
+                p.text(big, x + cw - 10, y - 35, 13f, true, INK, rtl = value !is Cell.Num && ArabicShaper.hasRtl(big))
+            }
+            y -= ch + 8
+        }
+        y -= 4
+    }
+
+    /** كتلة «أُعدّ بواسطة / اعتماد / التاريخ» في آخر التقرير. */
+    private fun approval(d: ReportDoc) {
+        val p = ensure(80f)
+        y -= 26
+        val cw = contentW / 3
+        listOf("أُعدّ بواسطة" to d.issuerName.ifBlank { "" }, "الاعتماد" to "", "التاريخ" to d.generatedAt.take(10)).forEachIndexed { i, (k, v) ->
+            val cx = right - cw * i - cw / 2
+            p.text(k, cx, y, 9.5f, true, GREEN, align = 0)
+            if (v.isNotBlank()) p.text(v, cx, y - 16, 9f, align = 0, rtl = ArabicShaper.hasRtl(v))
+            p.line(cx - cw * 0.35f, y - 30, cx + cw * 0.35f, y - 30, MUTE, 0.6f)
+        }
+        y -= 44
     }
 
     private fun ensure(hgt: Float): Page {
@@ -140,28 +214,26 @@ class PdfWriter(private val regular: TrueTypeFont, private val bold: TrueTypeFon
         d.voucher?.let { vc -> voucherPage(vc); return assemble() }
         if (d.kind == ReportDoc.Kind.VOUCHER) { pw = 419.53f; ph = 595.28f } else { pw = 595.28f; ph = 841.89f }
 
-        var p = newPage()
-        // العنوان والفترة
-        p.text(d.title, right, y - 8, if (d.kind == ReportDoc.Kind.VOUCHER) 18f else 20f, true, GREEN); y -= 30
-        p.text(d.period, right, y, 12f); y -= 18
-        p.text("تاريخ التوليد: ${d.generatedAt}", right, y, 9f, c = MUTE); y -= 14
-        for ((k, v) in d.filters + d.meta) {
-            val lines = wrap("$k: $v", fr, 9f, contentW)
-            for (l in lines) { p = ensure(13f); p.text(l, right, y, 9f, c = MUTE); y -= 13 }
+        var p = newPage(first = d.kind == ReportDoc.Kind.REPORT)
+        if (d.kind == ReportDoc.Kind.REPORT) letterhead(d) else {
+            p.text(d.title, right, y - 8, 18f, true, GREEN); y -= 30
+            p.text(d.period, right, y, 12f); y -= 18
+            for ((k, v) in d.filters + d.meta) wrap(if (k.isBlank()) v else "$k: $v", fr, 9f, contentW).forEach { l -> p = ensure(13f); p.text(l, right, y, 9f, c = MUTE); y -= 13 }
         }
-        y -= 4
         for (w in d.warnings) {
-            val lines = wrap("⚠ $w".replace("⚠", "!"), fb, 9.5f, contentW - 16)
-            val hh = lines.size * 14f + 8
-            p = ensure(hh)
-            p.rect(m, y - hh + 10, contentW, hh, WARN_BG)
+            val lines = wrap(w, fb, 9.5f, contentW - 70)
+            val hh = lines.size * 14f + 10
+            p = ensure(hh + 6)
+            p.box(m, y - hh + 10, contentW, hh, WARN_INK, 0.8f, WARN_BG)
+            p.text("تنبيه", right - 8, y - 2, 9.5f, true, WARN_INK)
             var yy = y
-            lines.forEach { l -> p.text(l, right - 8, yy - 2, 9.5f, true, WARN_INK); yy -= 14 }
-            y -= hh + 4
+            lines.forEach { l -> p.text(l, right - 50, yy - 2, 9.5f, false, WARN_INK); yy -= 14 }
+            y -= hh + 6
         }
         if (d.summary.isNotEmpty()) {
             heading("الملخّص")
-            table(listOf(Column("البند", ColType.TEXT, 2f), Column("القيمة", ColType.NUMBER, 1f)), d.summary.map { listOf(Cell.Text(it.first), it.second) }, emptyList())
+            if (d.kind == ReportDoc.Kind.REPORT) kpis(d.summary)
+            else table(listOf(Column("البند", ColType.TEXT, 2f), Column("القيمة", ColType.NUMBER, 1f)), d.summary.map { listOf(Cell.Text(it.first), it.second) }, emptyList())
         }
         for (t in d.tables) {
             heading(t.title)
@@ -171,6 +243,7 @@ class PdfWriter(private val regular: TrueTypeFont, private val bold: TrueTypeFon
         if (d.footerNote.isNotBlank()) {
             wrap(d.footerNote, fr, 9.5f, contentW).forEach { l -> val pg = ensure(14f); pg.text(l, right, y, 9.5f, c = MUTE); y -= 14 }
         }
+        if (d.kind == ReportDoc.Kind.REPORT && d.approvalBlock) approval(d)
         if (d.kind == ReportDoc.Kind.VOUCHER) {
             p = ensure(60f); y -= 30
             p.text("التوقيع: ________________", right, y, 10f)
@@ -178,18 +251,23 @@ class PdfWriter(private val regular: TrueTypeFont, private val bold: TrueTypeFon
         }
         // تذييل وترقيم
         pages.forEachIndexed { i, pg ->
-            pg.line(m, m + 6, right, m + 6, LINE, 0.6f)
+            pg.rect(m, m + 6, contentW, 0.7f, GOLD)
             pg.text("صفحة ${i + 1} من ${pages.size}", pw / 2, m - 6, 8.5f, c = MUTE, align = 0)
-            pg.text(d.generatedAt, m, m - 6, 8f, c = MUTE, align = -1, rtl = false)
+            pg.text("صادر من رصيدي · ${d.generatedAt}", m, m - 6, 7.5f, c = MUTE, align = -1)
+            pg.text(d.reportNo, right, m - 6, 7.5f, c = MUTE, rtl = false)
         }
         return assemble()
     }
 
+    /** عنوان قسم بعلامة ذهبية جانبية. */
     private fun heading(t: String) {
-        val p = ensure(40f)
-        y -= 8
-        p.text(t, right, y - 4, 13f, true, GREEN)
-        y -= 20
+        // عنوان القسم لا يبقى وحيداً أسفل الصفحة: يحجز مكاناً لأول صفوف الجدول معه
+        val p = ensure(110f)
+        y -= 10
+        p.rect(right - 4f, y - 8f, 4f, 16f, GOLD)
+        p.text(t, right - 10f, y - 4, 13f, true, GREEN)
+        p.line(m, y - 12, right - 12f - width(t, fb, 13f) - 8f, y - 12 + 0.01f, LINE, 0.5f)
+        y -= 24
     }
 
     private fun colWeight(c: Column) = when (c.type) { ColType.DATE -> 1.1f; ColType.CODE -> 0.75f; ColType.NUMBER -> 1.3f; ColType.TEXT -> 1.2f * c.weight }

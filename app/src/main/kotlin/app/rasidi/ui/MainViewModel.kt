@@ -96,7 +96,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    data class UiMessage(val text: String, val undoTxnId: String? = null)
+    /** رسالة للمستخدم؛ للأخطاء: سبب وحلّ وزر يأخذه إلى المكان المناسب. */
+    data class UiMessage(val text: String, val undoTxnId: String? = null, val action: app.rasidi.core.help.ErrorHelp.Action? = null)
+
+    private suspend fun emitError(msg: String?) {
+        val e = app.rasidi.core.help.ErrorHelp.explain(msg)
+        _messages.emit(UiMessage(if (e.fix.isBlank()) e.title else "${e.title}\n${e.fix}", action = e.action.takeIf { it != app.rasidi.core.help.ErrorHelp.Action.NONE }))
+    }
 
     /** اليوم بتوقيت الدفتر المحلي. */
     fun today(): LocalDate = LocalDate.now()
@@ -161,12 +167,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val r = block()
             if (success != null) _messages.emit(UiMessage(success, if (undoable) r as? String else null))
-        } catch (e: LedgerException) { _messages.emit(UiMessage(e.message ?: "تعذّر الحفظ")) }
-        catch (e: IllegalArgumentException) { _messages.emit(UiMessage(e.message ?: "قيمة غير صالحة")) }
-        catch (e: Exception) { _messages.emit(UiMessage("حدث خطأ: ${e.message ?: e.javaClass.simpleName}")) }
+        } catch (e: LedgerException) { emitError(e.message ?: "تعذّر الحفظ") }
+        catch (e: IllegalArgumentException) { emitError(e.message ?: "قيمة غير صالحة") }
+        catch (e: Exception) { emitError(e.message) }
     }
 
     fun message(text: String) { viewModelScope.launch { _messages.emit(UiMessage(text)) } }
+    /** خطأ من شاشة (مثل الاستعادة أو التصدير) يُعرض بسببه وحلّه. */
+    fun error(text: String?) { viewModelScope.launch { emitError(text) } }
 
     fun undo(txnId: String) = launchSafe("تم التراجع") { repo.undoRecent(txnId) }
 

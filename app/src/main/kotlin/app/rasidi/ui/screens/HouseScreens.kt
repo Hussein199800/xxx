@@ -48,8 +48,17 @@ fun MoreScreen(vm: MainViewModel, nav: NavController) {
         Text(title, style = MaterialTheme.typography.titleLarge, color = c.txt, modifier = Modifier.padding(top = Sp.lg, bottom = Sp.xs, start = 4.dp))
         Column(verticalArrangement = Arrangement.spacedBy(Sp.xs), content = content)
     }
+    var tab by rememberSaveable { mutableStateOf("ledger") }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Sp.md).padding(bottom = 170.dp)) {
         BigTitle("المزيد")
+        // ثلاثة أقسام على طريقة سَيْل: دفتري، المساعدة، عن رصيدي
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(bottom = Sp.sm)) {
+            listOf("ledger" to "دفتري", "help" to "المساعدة", "about" to "عن رصيدي").forEachIndexed { i, (id, l) ->
+                SegmentedButton(tab == id, { tab = id }, SegmentedButtonDefaults.itemShape(i, 3)) { Text(l) }
+            }
+        }
+        if (tab == "help") { HelpTab(vm, nav); return@Column }
+        if (tab == "about") { AboutTab(vm, nav); return@Column }
         // 1. بطاقة البطل: حالة الدفتر
         RCard(onClick = { nav.navigate(Routes.BACKUP) }, tint = c.priSoft) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -101,6 +110,53 @@ fun MoreScreen(vm: MainViewModel, nav: NavController) {
         if (demo) OutlinedButton(onClick = { vm.switchDemo(false); nav.navigate(Routes.HOME) { popUpTo(0) } }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = c.danger)) { Icon(Icons.Filled.Logout, null); Spacer(Modifier.width(8.dp)); Text("الخروج من الدفتر التجريبي") }
         Text("رصيدي · الإصدار ${app.rasidi.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = c.mute, modifier = Modifier.fillMaxWidth().padding(top = Sp.md), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+    }
+}
+
+/** المساعدة: الجولة، ما الجديد، ثم الشرح كاملاً. */
+@Composable
+fun HelpTab(vm: MainViewModel, nav: NavController) {
+    var tour by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(Sp.xs)) {
+        ListCard("جولة في التطبيق", "كيف تستخدم رصيدي في دقيقة", Icons.Filled.MenuBook, CardTint.sky) { tour = true }
+        ListCard("ما الجديد", "ما أضيف في كل إصدار", Icons.Filled.NewReleases, CardTint.amber) { nav.navigate(Routes.CHANGELOG) }
+    }
+    app.rasidi.ui.help.GuideList()
+    if (tour) app.rasidi.ui.help.TourDialog { tour = false; vm.device.tourSeen = true }
+}
+
+@Composable
+fun AboutTab(vm: MainViewModel, nav: NavController) {
+    val c = LocalR.current
+    RCard(tint = c.priSoft) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(Icons.Filled.AccountBalanceWallet, c.pri, 56.dp)
+            Spacer(Modifier.width(Sp.sm))
+            Column { Text("رصيدي", style = MaterialTheme.typography.headlineSmall, color = c.pri); Text("الإصدار ${app.rasidi.BuildConfig.VERSION_NAME}", color = c.mute) }
+        }
+        Spacer(Modifier.height(Sp.xs))
+        Text("دفتر مالي شخصي للبيت: مصروف ودخل وديون وذهب وجرد وزكاة، بالعربية وبلا إنترنت.", color = c.txt)
+    }
+    Spacer(Modifier.height(Sp.sm))
+    Column(verticalArrangement = Arrangement.spacedBy(Sp.xs)) {
+        ListCard("ما الجديد", "الإصدار ${app.rasidi.ui.help.CHANGELOG.first().version} وما قبله", Icons.Filled.NewReleases, CardTint.amber) { nav.navigate(Routes.CHANGELOG) }
+        ListCard("الخصوصية", "لا حساب ولا خوادم ولا إعلانات ولا تحليلات؛ بياناتك على هاتفك", Icons.Filled.Shield, CardTint.green) { nav.navigate(Routes.settings("about")) }
+        ListCard("الإعدادات", "البيانات الشخصية، الطباعة، السندات، المظهر", Icons.Filled.Tune, CardTint.violet) { nav.navigate(Routes.SETTINGS) }
+    }
+    Text("رصيدي · الإصدار ${app.rasidi.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = c.mute, modifier = Modifier.fillMaxWidth().padding(top = Sp.lg), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+}
+
+@Composable
+fun HelpScreen(vm: MainViewModel, nav: NavController) {
+    ScreenScaffold("المساعدة", { nav.popBackStack() }, sub = "اضغط أي بند ليُفتح الشرح") { HelpTab(vm, nav) }
+}
+
+@Composable
+fun ChangelogScreen(nav: NavController) {
+    ScreenScaffold("ما الجديد", { nav.popBackStack() }) {
+        Column(verticalArrangement = Arrangement.spacedBy(Sp.xs)) {
+            app.rasidi.ui.help.CHANGELOG.forEachIndexed { i, r -> app.rasidi.ui.help.ReleaseCard(r, i == 0) }
+        }
     }
 }
 

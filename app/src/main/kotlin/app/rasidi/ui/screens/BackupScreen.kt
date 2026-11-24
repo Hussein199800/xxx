@@ -285,7 +285,7 @@ private fun RestoreDialog(vm: MainViewModel, bytes: ByteArray, source: String, o
                 working = true
                 scope.launch {
                     try { preview = container.backupService.preview(bytes, RecoveryCode.parse(codeText)!!) }
-                    catch (e: BackupFormat.BackupException) { error = e.message } catch (e: Exception) { error = "تعذّر الفتح: ${e.message}" } finally { working = false }
+                    catch (e: BackupFormat.BackupException) { error = app.rasidi.core.help.ErrorHelp.explain(e.message).let { "${it.title}\n${it.fix}" } } catch (e: Exception) { error = "تعذّر الفتح: ${e.message}" } finally { working = false }
                 }
             }) { Text("افتح وتحقّق") }
             else TextButton(enabled = !working, onClick = {

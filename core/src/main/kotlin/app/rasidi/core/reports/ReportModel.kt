@@ -27,7 +27,17 @@ data class ReportDoc(
     val voucher: app.rasidi.core.voucher.Voucher? = null,
     /** ملاحظة أسفل التقرير عند الطباعة (مثل ملاحظة كشف الحساب). */
     val footerNote: String = "",
+    /** الجهة المُصدِرة في ترويسة التقرير (من «البيانات الشخصية»). */
+    val issuerName: String = "",
+    val issuerLine: String = "",
+    /** كتلة «أُعدّ بواسطة / اعتماد» في آخر التقرير الرسمي. */
+    val approvalBlock: Boolean = true,
 ) {
+    /** رقم مرجعي ثابت للتقرير من محتواه (العنوان والفترة ووقت الإصدار). */
+    val reportNo: String get() {
+        val h = java.security.MessageDigest.getInstance("SHA-256").digest("$title|$period|$generatedAt".toByteArray())
+        return "RPT-" + h.take(3).joinToString("") { "%02X".format(it) }
+    }
     enum class Kind { REPORT, VOUCHER }
 
     /** نسخة ملخّصة: الجداول بلا صفوف تفاصيل (الإجماليات فقط). */

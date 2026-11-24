@@ -12,10 +12,23 @@ object DocxWriter {
 
     fun write(doc: ReportDoc): ByteArray {
         val body = StringBuilder()
-        body.append(para(doc.title, style = "Title"))
-        body.append(para(doc.period, style = "Subtitle"))
-        body.append(para("تاريخ التوليد: ${doc.generatedAt}", style = "Meta"))
-        (doc.filters + doc.meta).forEach { (k, v) -> body.append(kvPara(k, v)) }
+        if (doc.kind == ReportDoc.Kind.REPORT) {
+            // ترويسة رسمية: الجهة المُصدِرة، ثم العنوان، ثم جدول المعلومات
+            body.append(para(doc.issuerName.ifBlank { "دفتري" }, style = "Issuer"))
+            if (doc.issuerLine.isNotBlank()) body.append(para(doc.issuerLine, style = "Meta"))
+            body.append(para("رصيدي · تقرير مالي", style = "Meta"))
+            body.append("<w:p><w:pPr><w:bidi/><w:pBdr><w:bottom w:val=\"double\" w:sz=\"6\" w:space=\"1\" w:color=\"0F5F3E\"/></w:pBdr></w:pPr></w:p>")
+            body.append(para(doc.title, style = "Title", jc = "center"))
+            body.append(para(doc.period, style = "Subtitle", jc = "center"))
+            val info = listOf("رقم التقرير" to doc.reportNo, "تاريخ الإصدار" to doc.generatedAt, "عدد البنود" to doc.rowCount.toString()) + doc.filters
+            body.append(table(listOf(Column("البيان", ColType.TEXT, 1f), Column("القيمة", ColType.TEXT, 2f)), info.map { listOf(Cell.Text(it.first), Cell.Text(it.second)) }, emptyList(), repeatHeader = false))
+            doc.meta.forEach { (k, v) -> body.append(kvPara(k, v)) }
+        } else {
+            body.append(para(doc.title, style = "Title"))
+            body.append(para(doc.period, style = "Subtitle"))
+            body.append(para("تاريخ التوليد: ${doc.generatedAt}", style = "Meta"))
+            (doc.filters + doc.meta).forEach { (k, v) -> body.append(kvPara(k, v)) }
+        }
         doc.warnings.forEach { body.append(para("⚠ $it", style = "Warn")) }
         if (doc.summary.isNotEmpty()) {
             body.append(para("الملخّص", style = "Heading1"))
@@ -25,6 +38,12 @@ object DocxWriter {
             body.append(para(t.title, style = "Heading1"))
             if (t.rows.isEmpty() && t.totals.isEmpty()) body.append(para("لا توجد بنود ضمن هذه الفلاتر.", style = "Meta"))
             else body.append(table(t.columns, t.rows, t.totals, repeatHeader = true))
+        }
+        if (doc.footerNote.isNotBlank()) body.append(para(doc.footerNote, style = "Meta"))
+        if (doc.kind == ReportDoc.Kind.REPORT && doc.approvalBlock) {
+            body.append(para("", null))
+            body.append(table(listOf(Column("أُعدّ بواسطة", ColType.TEXT), Column("الاعتماد", ColType.TEXT), Column("التاريخ", ColType.TEXT)),
+                listOf(listOf(Cell.t(doc.issuerName.ifBlank { " " }), Cell.Text(" "), Cell.Text(doc.generatedAt.take(10))), listOf(Cell.Text("التوقيع: __________"), Cell.Text("التوقيع: __________"), Cell.Text(" "))), emptyList(), repeatHeader = false))
         }
         if (doc.kind == ReportDoc.Kind.VOUCHER) {
             body.append(para("", null)); body.append(para("التوقيع: ____________________        المستلم: ____________________", null))
@@ -38,7 +57,7 @@ object DocxWriter {
         z.put("word/_rels/document.xml.rels", XML_HEAD + """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdSettings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/><Relationship Id="rIdFooter" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>""")
         z.put("word/document.xml", XML_HEAD + """<w:document xmlns:w="$W" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>$body</w:body></w:document>""")
         z.put("word/settings.xml", XML_HEAD + """<w:settings xmlns:w="$W"><w:defaultTabStop w:val="720"/><w:themeFontLang w:val="en-US" w:bidi="ar-SY"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>""")
-        z.put("word/footer1.xml", XML_HEAD + """<w:ftr xmlns:w="$W"><w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr>${run("رصيدي — ${doc.title} — صفحة ")}${field("PAGE")}${run(" من ")}${field("NUMPAGES")}</w:p></w:ftr>""")
+        z.put("word/footer1.xml", XML_HEAD + """<w:ftr xmlns:w="$W"><w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr>${run("صادر من رصيدي — ${doc.title} — ${doc.reportNo} — صفحة ")}${field("PAGE")}${run(" من ")}${field("NUMPAGES")}</w:p></w:ftr>""")
         z.put("word/styles.xml", STYLES)
         return z.bytes()
     }
@@ -116,6 +135,7 @@ object DocxWriter {
 <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="$FONT" w:hAnsi="$FONT" w:cs="$FONT" w:eastAsia="$FONT"/><w:sz w:val="20"/><w:szCs w:val="20"/><w:lang w:val="en-US" w:bidi="ar-SY"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:bidi/><w:spacing w:after="60" w:line="264" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
 <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:bidi/></w:pPr></w:style>
 <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:bidi/><w:spacing w:after="60"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="0F5F3E"/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Issuer"><w:name w:val="Issuer"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:bCs/><w:color w:val="0F5F3E"/><w:sz w:val="30"/><w:szCs w:val="30"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:qFormat/><w:rPr><w:color w:val="10241A"/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:bidi/><w:spacing w:before="240" w:after="100"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/><w:color w:val="0F5F3E"/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Meta"><w:name w:val="Meta"/><w:basedOn w:val="Normal"/><w:rPr><w:color w:val="6B7469"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>

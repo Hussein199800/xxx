@@ -26,6 +26,8 @@ class DeviceStore(ctx: Context) {
     var onboarded: Boolean get() = p.getBoolean("onboarded", false); set(v) = p.edit().putBoolean("onboarded", v).apply()
     var appLock: Boolean get() = p.getBoolean("appLock", false); set(v) = p.edit().putBoolean("appLock", v).apply()
     var autoBackup: Boolean get() = p.getBoolean("autoBackup", false); set(v) = p.edit().putBoolean("autoBackup", v).apply()
+    var tourSeen: Boolean get() = p.getBoolean("tourSeen", false); set(v) = p.edit().putBoolean("tourSeen", v).apply()
+    var seenVersion: String get() = p.getString("seenVersion", "") ?: ""; set(v) = p.edit().putString("seenVersion", v).apply()
     var codeConfirmed: Boolean get() = p.getBoolean("codeConfirmed", false); set(v) = p.edit().putBoolean("codeConfirmed", v).apply()
 
     // ربط Google Drive: الحساب المفوَّض مثبّت بـ permissionId

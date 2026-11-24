@@ -23,8 +23,10 @@ class ReportSamplesTest {
     private val today = LocalDate.of(2026, 11, 20)
     private val view = LedgerView(DemoData.snapshot(today, extraTxns = 140))
 
-    private fun writeAll(doc: ReportDoc, dir: File = outDir): List<File> {
+    private fun writeAll(d0: ReportDoc, dir: File = outDir): List<File> {
         dir.mkdirs()
+        // ترويسة الجهة المُصدِرة كما تأتي من «البيانات الشخصية» (بيانات اصطناعية)
+        val doc = d0.copy(issuerName = "بيت أبو محمد", issuerLine = "حلب، سوريا · +963 900 000 000")
         val x = File(dir, doc.fileBase + ".xlsx").apply { writeBytes(XlsxWriter.write(doc)) }
         val d = File(dir, doc.fileBase + ".docx").apply { writeBytes(DocxWriter.write(doc)) }
         val p = File(dir, doc.fileBase + ".pdf").apply { writeBytes(PdfWriter.withBundledFonts().write(doc)) }

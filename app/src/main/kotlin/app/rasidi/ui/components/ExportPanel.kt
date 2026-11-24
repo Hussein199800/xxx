@@ -28,7 +28,10 @@ import kotlinx.coroutines.withContext
  * [build] يبني النموذج المجمَّد مرة واحدة لكل اختيار؛ الصيغ الثلاث تقرأ النسخة نفسها.
  */
 @Composable
-fun ExportPanel(vm: MainViewModel, doc: ReportDoc?, showPrivacy: Boolean = true, hideNames: Boolean, hideNotes: Boolean, onPrivacy: (Boolean, Boolean) -> Unit) {
+fun ExportPanel(vm: MainViewModel, doc0: ReportDoc?, showPrivacy: Boolean = true, hideNames: Boolean, hideNotes: Boolean, onPrivacy: (Boolean, Boolean) -> Unit) {
+    // ترويسة التقرير الرسمي من «البيانات الشخصية»
+    val st by vm.settings.collectAsState()
+    val doc = doc0?.copy(issuerName = st.get("profile.name"), issuerLine = listOf(st.get("profile.city"), st.get("profile.phone")).filter { it.isNotBlank() }.joinToString(" · "))
     val c = LocalR.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()

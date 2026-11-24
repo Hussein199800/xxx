@@ -33,6 +33,7 @@ object Routes {
     const val PARTY = "party/{name}"; fun party(n: String) = "party/" + android.net.Uri.encode(n)
     const val SETTINGS_SECTION = "settings/{section}"; fun settings(sec: String) = "settings/$sec"
     const val TXNS_PERIOD = "txnsp/{period}"; fun txns(period: String) = "txnsp/$period"
+    const val HELP = "help"; const val CHANGELOG = "changelog"
     const val MEMBERS = "members"; const val BUDGETS = "budgets"; const val RECURRING = "recurring"
     const val ONBOARD = "onboard"
     const val ADD = "add/{type}?ref={ref}"; fun add(type: String, ref: String = "") = "add/$type?ref=$ref"
@@ -62,8 +63,19 @@ fun RasidiRoot(vm: MainViewModel, startOverride: String? = null) {
     var quickAdd by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         vm.messages.collect { m ->
-            val r = snack.showSnackbar(m.text, actionLabel = if (m.undoTxnId != null) "تراجع" else null, withDismissAction = m.undoTxnId == null, duration = SnackbarDuration.Short)
-            if (r == SnackbarResult.ActionPerformed && m.undoTxnId != null) vm.undo(m.undoTxnId)
+            val label = if (m.undoTxnId != null) "تراجع" else m.action?.label
+            val r = snack.showSnackbar(m.text, actionLabel = label, withDismissAction = label == null, duration = if (m.action != null) SnackbarDuration.Long else SnackbarDuration.Short)
+            if (r == SnackbarResult.ActionPerformed) {
+                if (m.undoTxnId != null) vm.undo(m.undoTxnId)
+                else when (m.action) {
+                    app.rasidi.core.help.ErrorHelp.Action.ACCOUNTS -> nav.navigate(Routes.ACCOUNTS)
+                    app.rasidi.core.help.ErrorHelp.Action.RATES -> nav.navigate(Routes.RATES)
+                    app.rasidi.core.help.ErrorHelp.Action.BACKUP -> nav.navigate(Routes.BACKUP)
+                    app.rasidi.core.help.ErrorHelp.Action.GUIDE -> nav.navigate(Routes.HELP)
+                    app.rasidi.core.help.ErrorHelp.Action.SETTINGS -> nav.navigate(Routes.SETTINGS)
+                    else -> {}
+                }
+            }
         }
     }
     if (!ready) { Box(Modifier.fillMaxSize().background(LocalR.current.bg)); return }
@@ -102,6 +114,8 @@ fun RasidiRoot(vm: MainViewModel, startOverride: String? = null) {
             composable(Routes.CATEGORIES) { CategoriesScreen(vm, nav) }
             composable(Routes.CALC) { CalculatorScreen(vm, nav) }
             composable(Routes.MEMBERS) { MembersScreen(vm, nav) }
+            composable(Routes.HELP) { HelpScreen(vm, nav) }
+            composable(Routes.CHANGELOG) { ChangelogScreen(nav) }
             composable(Routes.PARTY) { e -> PartyStatementScreen(vm, nav, e.arguments?.getString("name").orEmpty()) }
             composable(Routes.SETTINGS_SECTION) { e -> SettingsSectionScreen(vm, nav, e.arguments?.getString("section").orEmpty()) }
             composable(Routes.TXNS_PERIOD) { e -> TransactionsScreen(vm, nav, e.arguments?.getString("period").orEmpty()) }
@@ -124,6 +138,18 @@ fun RasidiRoot(vm: MainViewModel, startOverride: String? = null) {
         }
         SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (showBar) 150.dp else 16.dp))
     }
+    // الجولة للمستخدم الجديد، و«ما الجديد» بعد كل تحديث
+    var showTour by remember { mutableStateOf(false) }
+    var showNew by remember { mutableStateOf(false) }
+    LaunchedEffect(route) {
+        if (route == Routes.HOME && vm.device.onboarded) {
+            val ver = app.rasidi.BuildConfig.VERSION_NAME
+            if (!vm.device.tourSeen) showTour = true
+            else if (vm.device.seenVersion != ver) showNew = true
+        }
+    }
+    if (showTour) app.rasidi.ui.help.TourDialog { showTour = false; vm.device.tourSeen = true; vm.device.seenVersion = app.rasidi.BuildConfig.VERSION_NAME }
+    if (showNew) app.rasidi.ui.help.WhatsNewDialog(app.rasidi.BuildConfig.VERSION_NAME) { showNew = false; vm.device.seenVersion = app.rasidi.BuildConfig.VERSION_NAME }
     if (quickAdd) QuickAddSheet(onDismiss = { quickAdd = false }) { type -> quickAdd = false; nav.navigate(Routes.add(type)) }
 }
 
