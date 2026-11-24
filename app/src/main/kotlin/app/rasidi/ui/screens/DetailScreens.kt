@@ -64,19 +64,23 @@ fun TxnDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
         }
         t.debtId?.let { d -> SoftButton("افتح الدين", { nav.navigate(Routes.debt(d)) }, Modifier.padding(top = Sp.sm)) }
         Spacer(Modifier.height(Sp.md))
-        Row(horizontalArrangement = Arrangement.spacedBy(Sp.xs)) {
-            SoftButton("السند", { voucher = !voucher }, Modifier.weight(1f), icon = Icons.Filled.Receipt)
-            if ((type == TxnType.INCOME || type == TxnType.EXPENSE) && t.reversedById == null)
-                SoftButton("تعديل", { nav.navigate(Routes.add(if (type == TxnType.INCOME) "income" else "expense", id)) }, Modifier.weight(1f), icon = Icons.Filled.Edit)
+        // السند: طباعة ومشاركة (مثل «طباعة سند / مشاركة سند / إشعار»)
+        RCard {
+            Row(verticalAlignment = Alignment.CenterVertically) { IconBadge(Icons.Filled.Receipt, CardTint.green); Spacer(Modifier.width(Sp.sm)); Text("السند", style = MaterialTheme.typography.titleMedium) }
+            VoucherActions(vm, id)
+            TextButton(onClick = { voucher = !voucher }) { Text(if (voucher) "إخفاء الصيغ الأخرى" else "حفظ كملف (PDF أو Word أو Excel)") }
         }
+        Spacer(Modifier.height(Sp.xs))
+        if ((type == TxnType.INCOME || type == TxnType.EXPENSE) && t.reversedById == null)
+            SoftButton("تعديل", { nav.navigate(Routes.add(if (type == TxnType.INCOME) "income" else "expense", id)) }, Modifier.fillMaxWidth(), icon = Icons.Filled.Edit)
         if (t.reversedById == null && t.reversesId == null && es.isNotEmpty()) {
             Spacer(Modifier.height(Sp.xs))
             OutlinedButton(onClick = { confirmReverse = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Icon(Icons.Filled.Undo, null); Spacer(Modifier.width(6.dp)); Text("عكس الحركة") }
         }
         if (voucher) {
             Spacer(Modifier.height(Sp.sm))
-            val doc = remember(t, hideNames, hideNotes) { ReportBuilders.voucher(view, id, nowStamp(), PrivacyOptions(hideNames, hideNotes)) }
-            Text(doc.title, style = MaterialTheme.typography.titleLarge, color = c.pri)
+            val st by vm.settings.collectAsStateWithLifecycle()
+            val doc = remember(t, hideNames, hideNotes, st) { ReportBuilders.voucher(view, id, nowStamp(), PrivacyOptions(hideNames, hideNotes), st.voucherOptions()) }
             ExportPanel(vm, doc, true, hideNames, hideNotes) { a, b -> hideNames = a; hideNotes = b }
         }
     }
@@ -153,6 +157,8 @@ fun DebtDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
             }
         }
         Spacer(Modifier.height(Sp.sm))
+        SoftButton("كشف حساب ${d.party}", { nav.navigate(Routes.party(d.party)) }, Modifier.fillMaxWidth(), icon = Icons.Filled.ReceiptLong)
+        Spacer(Modifier.height(Sp.xs))
         SoftButton("تصدير كشف الدين", { export = !export }, Modifier.fillMaxWidth(), icon = Icons.Filled.IosShare)
         if (export) {
             val doc = remember(view, hideNames) { ReportBuilders.debtReport(view, id, vm.today(), nowStamp(), PrivacyOptions(hideNames)) }
@@ -164,44 +170,87 @@ fun DebtDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
 }
 
 @Composable
+private fun StepHeader(step: Int, total: Int, title: String) {
+    val c = LocalR.current
+    Text("الخطوة $step من $total: $title", style = MaterialTheme.typography.titleLarge, color = c.pri)
+    Spacer(Modifier.height(6.dp))
+    LinearProgressIndicator(progress = { step / total.toFloat() }, modifier = Modifier.fillMaxWidth().height(5.dp), color = c.pri, trackColor = c.soft)
+    Spacer(Modifier.height(Sp.md))
+}
+
+/** أول تشغيل بخطوات: البداية (محلياً أو استرجاع)، ثم البيانات الشخصية، ثم أول محفظة، ثم حماية البيانات. */
+@Composable
 fun OnboardingScreen(vm: MainViewModel, nav: NavController) {
     val c = LocalR.current
     var mode by rememberSaveable { mutableStateOf("") }
+    var step by rememberSaveable { mutableStateOf(1) }
+    var pname by rememberSaveable { mutableStateOf("") }
+    var city by rememberSaveable { mutableStateOf("") }
     var name by rememberSaveable { mutableStateOf("نقد") }
     var type by rememberSaveable { mutableStateOf(AccountType.CASH) }
     var cur by rememberSaveable { mutableStateOf("USD") }
     val opening = remember { AmountState() }
     var date by remember { mutableStateOf(vm.today()) }
-    fun done() { vm.device.onboarded = true; nav.navigate(Routes.HOME) { popUpTo(Routes.ONBOARD) { inclusive = true } } }
-    ScreenScaffold("أهلاً في رصيدي", null, sub = "دفترك المالي على جهازك. يعمل بلا إنترنت.") {
+    fun done(to: String = Routes.HOME) { vm.device.onboarded = true; nav.navigate(to) { popUpTo(Routes.ONBOARD) { inclusive = true } } }
+    ScreenScaffold("أهلاً في رصيدي", null, sub = if (mode.isEmpty()) "دفترك المالي على جهازك. يعمل بلا إنترنت." else null) {
         if (mode.isEmpty()) {
             RCard(onClick = { mode = "local" }) {
                 IconBadge(Icons.Filled.PhoneAndroid, c.pri)
                 Text("ابدأ محلياً", style = MaterialTheme.typography.titleLarge, color = c.txt)
-                Text("أضف أول محفظة ورصيدها الافتتاحي، أو ابدأ بمحفظة فارغة.", color = c.mute)
+                Text("ثلاث خطوات قصيرة: اسمك، أول محفظة، حماية بياناتك.", color = c.mute)
             }
             Spacer(Modifier.height(Sp.sm))
-            RCard(onClick = { vm.device.onboarded = true; nav.navigate(Routes.BACKUP) { popUpTo(Routes.ONBOARD) { inclusive = true } } }) {
+            RCard(onClick = { done(Routes.BACKUP) }) {
                 IconBadge(Icons.Filled.Restore, c.gold)
                 Text("استرجع سجلي", style = MaterialTheme.typography.titleLarge, color = c.txt)
                 Text("من ملف .rasidi أو من Google Drive، برمز الاستعادة.", color = c.mute)
             }
             Spacer(Modifier.height(Sp.sm))
             TextButton(onClick = { vm.device.onboarded = true; vm.switchDemo(true) }) { Text("جرّب دفتراً تجريبياً منفصلاً") }
-        } else {
-            TextIn(name, { name = it }, "اسم المحفظة")
-            Spacer(Modifier.height(Sp.xs))
-            ChipRow(AccountType.values().toList(), type, { it.ar }, { type = it })
-            Spacer(Modifier.height(Sp.xs))
-            ChipRow(listOf("USD", "TRY", "SYP", "EUR", "SYP_OLD"), cur, { Currencies.of(it).nameAr }, { cur = it })
-            AmountField(opening, Currencies.of(cur), "الرصيد الافتتاحي (اختياري)")
-            DateField(date, { date = it }, "تاريخ الرصيد")
-            Spacer(Modifier.height(Sp.md))
-            val m = if (opening.text.isBlank()) Money.zero(Currencies.of(cur)) else opening.parse(Currencies.of(cur))
-            PrimaryButton("ابدأ", enabled = name.isNotBlank() && m != null, modifier = Modifier.fillMaxWidth(), onClick = {
-                vm.launchSafe("أُضيفت المحفظة") { vm.repo.createAccount(name, type, Currencies.of(cur), m!!.minor, date); done() }
-            })
-            TextButton(onClick = { vm.launchSafe { vm.repo.createAccount("نقد", AccountType.CASH, Currencies.USD, 0, vm.today()); done() } }) { Text("ابدأ بمحفظة فارغة") }
+            return@ScreenScaffold
+        }
+        when (step) {
+            1 -> {
+                StepHeader(1, 3, "بياناتك في السندات")
+                TextIn(pname, { pname = it }, "الاسم أو اسم البيت (اختياري)")
+                Spacer(Modifier.height(Sp.xs))
+                TextIn(city, { city = it }, "المدينة والبلد (اختياري)")
+                Text("تظهر في رأس السندات عند الطباعة والمشاركة. يمكنك تعديلها لاحقاً من الإعدادات.", style = MaterialTheme.typography.bodySmall, color = c.mute, modifier = Modifier.padding(vertical = 8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(Sp.xs)) {
+                    PrimaryButton("التالي", { if (pname.isNotBlank()) vm.setSetting("profile.name", pname.trim()); if (city.isNotBlank()) vm.setSetting("profile.city", city.trim()); step = 2 }, Modifier.weight(1f))
+                    TextButton(onClick = { step = 2 }) { Text("تخطي") }
+                }
+            }
+            2 -> {
+                StepHeader(2, 3, "أول محفظة")
+                TextIn(name, { name = it }, "اسم المحفظة")
+                Spacer(Modifier.height(Sp.xs))
+                ChipRow(AccountType.values().toList(), type, { it.ar }, { type = it })
+                Spacer(Modifier.height(Sp.xs))
+                Text("العملة", style = MaterialTheme.typography.titleSmall, color = c.mute)
+                ChipRow(listOf("USD", "TRY", "SYP", "EUR", "SYP_OLD"), cur, { Currencies.of(it).nameAr }, { cur = it })
+                AmountField(opening, Currencies.of(cur), "الرصيد الافتتاحي (اختياري)")
+                DateField(date, { date = it }, "تاريخ الرصيد")
+                Spacer(Modifier.height(Sp.md))
+                val m = if (opening.text.isBlank()) Money.zero(Currencies.of(cur)) else opening.parse(Currencies.of(cur))
+                Row(horizontalArrangement = Arrangement.spacedBy(Sp.xs)) {
+                    PrimaryButton("التالي", enabled = name.isNotBlank() && m != null, modifier = Modifier.weight(1f), onClick = {
+                        vm.launchSafe("أُضيفت المحفظة") { vm.repo.createAccount(name, type, Currencies.of(cur), m!!.minor, date); step = 3 }
+                    })
+                    TextButton(onClick = { step = 1 }) { Text("السابق") }
+                }
+            }
+            else -> {
+                StepHeader(3, 3, "احمِ بياناتك")
+                RCard(tint = c.goldSoft) {
+                    IconBadge(Icons.Filled.Key, c.gold)
+                    Text("رمز الاستعادة", style = MaterialTheme.typography.titleMedium)
+                    Text("أنشئه الآن واكتبه خارج الهاتف. به وحده تُفتح نسخك الاحتياطية من ملف أو من Google Drive إن ضاع الهاتف.", color = c.mute)
+                }
+                Spacer(Modifier.height(Sp.md))
+                PrimaryButton("أنشئ رمز الاستعادة الآن", { done(Routes.BACKUP) }, Modifier.fillMaxWidth(), icon = Icons.Filled.Key)
+                TextButton(onClick = { done() }, modifier = Modifier.fillMaxWidth()) { Text("لاحقاً، ابدأ الاستخدام") }
+            }
         }
     }
 }

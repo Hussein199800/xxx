@@ -63,6 +63,9 @@ data class Snapshot(
         val BACKUP_SETTING_KEYS = setOf(
             "ledger.timezone", "ui.theme", "ui.fontScale", "ui.hideAmounts", "default.account", "default.expenseCategory",
             "syp.effectiveDate", "syp.withdrawalEnd", "zakat.nisabPolicy", "zakat.percent", "export.hideNames",
+            // البيانات الشخصية وإعدادات السندات والطباعة وأزرار الرئيسية (1.2)
+            "profile.name", "profile.city", "profile.phone", "print.paper", "voucher.showBalance", "voucher.signatures",
+            "voucher.footer", "statement.footer", "home.buttons",
         )
     }
 }

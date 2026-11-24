@@ -34,7 +34,28 @@ data class TxnRow(
 
 data class DebtRow(val debt: Debt, val paid: Money, val remaining: Money, val status: DebtStatus, val nextDue: LocalDate?, val archived: Boolean)
 
-data class UiSettings(val theme: String = "system", val fontScale: Float = 1f, val hideAmounts: Boolean = false)
+data class UiSettings(val theme: String = "system", val fontScale: Float = 1f, val hideAmounts: Boolean = false, val all: Map<String, String> = emptyMap()) {
+    fun get(k: String, def: String = "") = all[k] ?: def
+    /** خيارات السندات من «البيانات الشخصية» و«إعدادات السندات» و«إعدادات الطباعة». */
+    fun voucherOptions() = app.rasidi.core.voucher.VoucherOptions(
+        app.rasidi.core.voucher.Profile(get("profile.name"), get("profile.city"), get("profile.phone")),
+        runCatching { app.rasidi.core.voucher.Paper.valueOf(get("print.paper", "A4")) }.getOrDefault(app.rasidi.core.voucher.Paper.A4),
+        get("voucher.showBalance", "1") == "1",
+        get("voucher.signatures", "المستلم|المحاسب").split('|').map { it.trim() }.filter { it.isNotBlank() },
+        get("voucher.footer"),
+    )
+    val homeButtons: List<String> get() = get("home.buttons", HomeButtons.DEFAULT).split(',').filter { it in HomeButtons.ALL }
+}
+
+/** أزرار الواجهة الرئيسية القابلة للتخصيص (مثل «تخصيص أزرار الواجهة الرئيسية»). */
+object HomeButtons {
+    val ALL = linkedMapOf(
+        "receipt" to "سند قبض", "payment" to "سند صرف", "exchange" to "صرف عملات", "statement" to "كشف حساب",
+        "today" to "حركة اليوم", "debtpay" to "دفعة دين", "debt" to "دين جديد", "search" to "بحث سريع",
+        "inventory" to "الجرد", "calc" to "الحاسبة", "report" to "تقرير", "rates" to "الأسعار",
+    )
+    const val DEFAULT = "receipt,payment,exchange,statement,today,debtpay"
+}
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val rapp = app as RasidiApp
@@ -101,10 +122,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun loadSettings() {
+        val all = repo.snapshot(includeAudit = false).settings.associate { it.key to it.value }
         _settings.value = UiSettings(
-            repo.setting("ui.theme") ?: "system",
-            repo.setting("ui.fontScale")?.toFloatOrNull() ?: 1f,
-            repo.setting("ui.hideAmounts") == "1",
+            all["ui.theme"] ?: "system",
+            all["ui.fontScale"]?.toFloatOrNull() ?: 1f,
+            all["ui.hideAmounts"] == "1",
+            all,
         )
     }
 

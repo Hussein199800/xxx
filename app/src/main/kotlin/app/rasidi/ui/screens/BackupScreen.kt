@@ -160,7 +160,7 @@ fun BackupScreen(vm: MainViewModel, nav: NavController) {
             }
         }
         // ---------- ملف ----------
-        SectionHeader("نسخة ملف")
+        SectionHeader("النسخ على الهاتف")
         RCard {
             KeyValue("آخر نسخة ملف", fmtTime(dev.lastLocalBackupAt))
             Row(horizontalArrangement = Arrangement.spacedBy(Sp.xs)) {
@@ -172,7 +172,18 @@ fun BackupScreen(vm: MainViewModel, nav: NavController) {
                     }
                 })
             }
-            SoftButton("استعد من ملف", { openFile.launch(arrayOf("*/*")) }, Modifier.fillMaxWidth().padding(top = 6.dp), icon = Icons.Filled.FileOpen, enabled = !demo)
+            SoftButton("مشاركة نسخة احتياطية (تليجرام، واتساب، بريد…)", {
+                busy = true
+                scope.launch {
+                    try {
+                        val cr = container.backupService.create(dev.recoveryCode()!!, "MANUAL")
+                        ctx.startActivity(app.rasidi.reports.ExportService.shareIntent(ctx, container.backupService.fileName("manual"), "application/octet-stream", cr.bytes))
+                        dev.lastLocalBackupAt = System.currentTimeMillis(); refresh++
+                    } catch (e: Exception) { vm.message("تعذّرت المشاركة: ${e.message}") } finally { busy = false }
+                }
+            }, Modifier.fillMaxWidth().padding(top = 6.dp), icon = Icons.Filled.Share, enabled = !busy && dev.hasRecoveryCode() && dev.codeConfirmed && !demo)
+            SoftButton("استعادة نسخة احتياطية من ملف", { openFile.launch(arrayOf("*/*")) }, Modifier.fillMaxWidth().padding(top = 6.dp), icon = Icons.Filled.FileOpen, enabled = !demo)
+            Text("النسخة مشفّرة؛ مشاركتها آمنة، ولا تُفتح إلا برمز الاستعادة.", style = MaterialTheme.typography.bodySmall, color = c.mute)
         }
         // ---------- Google Drive ----------
         SectionHeader("Google Drive")
@@ -217,6 +228,7 @@ fun BackupScreen(vm: MainViewModel, nav: NavController) {
                 }
             }
         }
+        SectionHeader("أخرى")
         CsvImportSection(vm)
         val safety = container.backupService.safetyFiles()
         if (safety.isNotEmpty()) {
@@ -314,7 +326,7 @@ private fun CsvImportSection(vm: MainViewModel) {
     val saveTemplate = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         if (uri != null) scope.launch { withContext(Dispatchers.IO) { ctx.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(("\uFEFF" + app.rasidi.core.importer.CsvImport.TEMPLATE).toByteArray()) } }; vm.message("حُفظ القالب") }
     }
-    SectionHeader("استيراد من تطبيق قديم (CSV)")
+    Text("استيراد من تطبيق قديم (CSV)", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(vertical = Sp.xs))
     RCard {
         Text("صدّر حركاتك من التطبيق القديم إلى CSV، ثم طابق الأعمدة مع القالب: date,type,amount,currency,account,category,note,party,id", style = MaterialTheme.typography.bodySmall, color = c.mute)
         Row(horizontalArrangement = Arrangement.spacedBy(Sp.xs)) {

@@ -98,7 +98,7 @@ object DemoData {
             accounts = accounts, categories = defaultCategories, txns = txns, entries = entries,
             debts = debts, installments = inst, debtPayments = payments,
             goldHoldings = gold, goldMoves = goldMoves, rates = rates,
-            settings = listOf(SettingEntity("ui.theme", "system")),
+            settings = listOf(SettingEntity("ui.theme", "system"), SettingEntity("profile.name", "بيت أبو محمد"), SettingEntity("profile.city", "حلب، سوريا")),
             members = listOf(MemberEntity("mem-1", "أبو محمد", sort = 1), MemberEntity("mem-2", "أم محمد", sort = 2), MemberEntity("mem-3", "محمد", sort = 3)),
             budgets = listOf(
                 BudgetEntity("bud-food", "cat-food", "TRY", 400_000),

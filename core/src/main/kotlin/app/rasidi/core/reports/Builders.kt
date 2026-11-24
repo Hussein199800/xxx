@@ -204,24 +204,48 @@ object ReportBuilders {
         )
     }
 
-    /** سند مستخرج من حركة موجودة: قبض، صرف، تبديل أو دفعة دين. */
-    fun voucher(v: LedgerView, txnId: String, generatedAt: String, p: PrivacyOptions = PrivacyOptions()): ReportDoc {
+    /** سند مستخرج من حركة موجودة (قبض، صرف، صرف عملات، تحويل، إشعار مدين/دائن) بقالب السندات. */
+    fun voucher(v: LedgerView, txnId: String, generatedAt: String, p: PrivacyOptions = PrivacyOptions(),
+                opt: app.rasidi.core.voucher.VoucherOptions = app.rasidi.core.voucher.VoucherOptions(), asNotice: Boolean = false): ReportDoc {
+        val vc = app.rasidi.core.voucher.VoucherBuilder.build(v, txnId, opt.copy(hideParty = p.hideNames || opt.hideParty), generatedAt, asNotice)
         val t = v.txnById.getValue(txnId)
-        val es = v.entries.filter { it.txnId == txnId }
-        val kind = when (TxnType.valueOf(t.type)) {
-            TxnType.TRANSFER -> if (es.map { it.amount.currency.code }.distinct().size > 1) "سند تبديل" else "سند تحويل"
-            TxnType.DEBT_PAYMENT -> "سند دفعة دين"
-            else -> if (es.sumOf { it.amount.minor } >= 0 && es.all { it.amount.minor >= 0 }) "سند قبض" else "سند صرف"
-        }
-        val rows = es.map { e -> listOf(Cell.t(v.accountById[e.accountId]?.name), Cell.Text(kindAr(e.kind)), money(e.amount), Cell.Text(e.amount.currency.code)) }
         return ReportDoc(
-            ReportDoc.Kind.VOUCHER, kind, "رقم المرجع: ${t.id.takeLast(8).uppercase()}", generatedAt,
-            meta = listOfNotNull("التاريخ" to t.date, "النوع" to typeAr(t),
-                t.party.takeIf { it.isNotBlank() }?.let { "الطرف" to name(it, p) },
-                t.note.takeIf { it.isNotBlank() && !p.hideNotes }?.let { "البيان" to it },
-                t.fxRate?.let { "السعر الفعلي" to it }),
-            tables = listOf(ReportTable("القيود", "القيود", listOf(Column("الحساب", ColType.TEXT, 1.2f), Column("القيد", ColType.TEXT), Column("المبلغ", ColType.NUMBER), Column("العملة", ColType.CODE)), rows)),
-            fileBase = FileNames.safe("رصيدي-$kind-${t.date}-${t.id.takeLast(6)}"),
+            ReportDoc.Kind.VOUCHER, vc.kind.title, "رقم ${vc.number} · ${vc.dateLine}", generatedAt,
+            meta = listOf("" to vc.sentence),
+            tables = listOf(ReportTable("تفاصيل السند", "السند", listOf(Column("البند", ColType.TEXT, 0.8f), Column("القيمة", ColType.TEXT, 2f)),
+                (listOfNotNull(
+                    ("الأخ" to "${vc.party} المحترم").takeIf { vc.party.isNotBlank() },
+                    "المبلغ" to Fmt.money(vc.amount, false),
+                    "كتابةً" to vc.words,
+                    ("البيان" to vc.statement).takeIf { vc.statement.isNotBlank() && !p.hideNotes },
+                ) + vc.details).map { (k, x) -> listOf(Cell.Text(k), Cell.Text(x)) })),
+            fileBase = FileNames.safe("رصيدي-${vc.kind.title}-${vc.number}-${t.date}"),
+            voucher = if (p.hideNotes) vc.copy(statement = "") else vc,
+        )
+    }
+
+    /** كشف حساب شخص: النوع (عليه/له)، المبلغ، التفاصيل، الرصيد، مع رصيد سابق اختياري. */
+    fun partyStatement(v: LedgerView, party: String, currency: String, from: LocalDate, to: LocalDate, includePrior: Boolean, generatedAt: String, footerNote: String = "", p: PrivacyOptions = PrivacyOptions()): ReportDoc {
+        val st = PartyLedger.statement(v, party, currency, from, to, includePrior)
+        val cur = Currencies.of(currency)
+        val rows = mutableListOf<List<Cell>>()
+        if (includePrior) rows += listOf(Cell.d(from), Cell.Text("رصيد سابق"), Cell.Empty, Cell.Empty, money(st.prior), Cell.Text(currency))
+        st.lines.forEach { l ->
+            rows += listOf(Cell.d(l.date), Cell.Text(if (l.onHim != null) "عليه" else "له"), money(l.onHim ?: l.forHim!!), Cell.t(note(l.details, p)), money(l.balance), Cell.Text(currency))
+        }
+        val name = if (p.hideNames) "طرف" else party
+        return ReportDoc(
+            ReportDoc.Kind.REPORT, "كشف حساب: $name", period(from, to), generatedAt,
+            filters = listOf("العملة" to cur.nameAr, "رصيد سابق" to if (includePrior) "مُدرج" else "غير مُدرج"),
+            summary = listOf("عليه ($currency)" to money(st.totalOn), "له ($currency)" to money(st.totalFor), "${st.closingLabel} ($currency)" to money(st.closing.abs())),
+            tables = listOf(ReportTable("الحركات", "الكشف", listOf(Column("التاريخ", ColType.DATE), Column("النوع", ColType.TEXT, 0.5f), Column("المبلغ", ColType.NUMBER),
+                Column("التفاصيل", ColType.TEXT, 1.6f), Column("الرصيد", ColType.NUMBER), Column("العملة", ColType.CODE)), rows,
+                totals = listOf(
+                    listOf(Cell.Empty, Cell.Text("عليه"), money(st.totalOn), Cell.Empty, Cell.Empty, Cell.Text(currency)),
+                    listOf(Cell.Empty, Cell.Text("له"), money(st.totalFor), Cell.Empty, Cell.Empty, Cell.Text(currency)),
+                    listOf(Cell.Empty, Cell.Text(st.closingLabel), Cell.Empty, Cell.Empty, money(st.closing.abs()), Cell.Text(currency))))),
+            fileBase = FileNames.safe("رصيدي-كشف-$name-$currency-${stamp(from, to)}"),
+            footerNote = footerNote,
         )
     }
 

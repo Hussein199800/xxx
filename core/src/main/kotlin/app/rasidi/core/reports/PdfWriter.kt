@@ -1,5 +1,6 @@
 package app.rasidi.core.reports
 
+import app.rasidi.core.money.Fmt
 import java.io.ByteArrayOutputStream
 import java.util.zip.Deflater
 
@@ -86,6 +87,10 @@ class PdfWriter(private val regular: TrueTypeFont, private val bold: TrueTypeFon
         val sb = StringBuilder()
         fun color(c: FloatArray, stroke: Boolean = false) = sb.append("%.3f %.3f %.3f %s\n".format(java.util.Locale.US, c[0], c[1], c[2], if (stroke) "RG" else "rg"))
         fun rect(x: Float, y: Float, rw: Float, rh: Float, c: FloatArray) { color(c); sb.append("%.2f %.2f %.2f %.2f re f\n".format(java.util.Locale.US, x, y, rw, rh)) }
+        fun box(x: Float, y: Float, rw: Float, rh: Float, c: FloatArray, lw: Float = 0.8f, fill: FloatArray? = null) {
+            fill?.let { rect(x, y, rw, rh, it) }
+            color(c, true); sb.append("%.2f w %.2f %.2f %.2f %.2f re S\n".format(java.util.Locale.US, lw, x, y, rw, rh))
+        }
         fun line(x1: Float, y1: Float, x2: Float, y2: Float, c: FloatArray, lw: Float = 0.5f) {
             color(c, true); sb.append("%.2f w %.2f %.2f m %.2f %.2f l S\n".format(java.util.Locale.US, lw, x1, y1, x2, y2))
         }
@@ -132,6 +137,7 @@ class PdfWriter(private val regular: TrueTypeFont, private val bold: TrueTypeFon
         doc = d
         pages.clear(); cur = null
         fr = FontUse(regular, "F1"); fb = FontUse(bold, "F2")
+        d.voucher?.let { vc -> voucherPage(vc); return assemble() }
         if (d.kind == ReportDoc.Kind.VOUCHER) { pw = 419.53f; ph = 595.28f } else { pw = 595.28f; ph = 841.89f }
 
         var p = newPage()
@@ -161,6 +167,9 @@ class PdfWriter(private val regular: TrueTypeFont, private val bold: TrueTypeFon
             heading(t.title)
             if (t.rows.isEmpty() && t.totals.isEmpty()) { val pg = ensure(16f); pg.text("لا توجد بنود ضمن هذه الفلاتر.", right, y, 10f, c = MUTE); y -= 18 }
             else table(t.columns, t.rows, t.totals)
+        }
+        if (d.footerNote.isNotBlank()) {
+            wrap(d.footerNote, fr, 9.5f, contentW).forEach { l -> val pg = ensure(14f); pg.text(l, right, y, 9.5f, c = MUTE); y -= 14 }
         }
         if (d.kind == ReportDoc.Kind.VOUCHER) {
             p = ensure(60f); y -= 30
@@ -230,6 +239,129 @@ class PdfWriter(private val regular: TrueTypeFont, private val bold: TrueTypeFon
         rows.forEachIndexed { i, r -> row(r, i, false, if (i % 2 == 1) ZEBRA else null) }
         totals.forEach { row(it, 0, true, TOTAL) }
         y -= 10
+    }
+
+    // ---------- قالب السند ----------
+    private val SOFT = floatArrayOf(0.918f, 0.949f, 0.925f)
+
+    private fun voucherPage(vc: app.rasidi.core.voucher.Voucher) {
+        val paper = vc.options.paper
+        if (paper.roll) {
+            pw = paper.widthPt
+            val probe = Page(pw, 5000f); val used = rollDraw(probe, vc, 5000f)
+            ph = used + 16f
+            fr.used.clear(); fb.used.clear()
+            val p = Page(pw, ph); pages += p; cur = p
+            rollDraw(p, vc, ph)
+            return
+        }
+        pw = paper.widthPt; ph = paper.heightPt
+        val k = pw / 595.28f
+        val mm = 30f * k; val r = pw - mm; val w = pw - 2 * mm
+        val p = Page(pw, ph); pages += p; cur = p
+        var yy = ph - 38f * k
+        val pr = vc.options.profile
+        // الترويسة: صاحب الدفتر يميناً، والتطبيق يساراً
+        p.text(pr.name.ifBlank { "دفتري" }, r, yy, 13f * k, true, GREEN)
+        p.text("رصيدي", mm, yy, 12f * k, true, GREEN, align = -1)
+        listOf(pr.city, pr.phone).filter { it.isNotBlank() }.forEachIndexed { i, t -> p.text(t, r, yy - (14f + 13f * i) * k, 9.5f * k, c = MUTE, rtl = !t.first().isDigit() && t.first() != '+') }
+        p.text("دفتر مالي شخصي", mm, yy - 14f * k, 9f * k, c = MUTE, align = -1)
+        yy -= 46f * k
+        p.line(mm, yy, r, yy, LINE, 1f)
+        // صندوق العنوان
+        yy -= 40f * k
+        val tw = 230f * k
+        p.box(pw / 2 - tw / 2, yy, tw, 30f * k, GREEN, 1.2f, SOFT)
+        p.text(vc.kind.title, pw / 2, yy + 9f * k, 16f * k, true, GREEN, align = 0)
+        // التاريخ ورقم السند
+        yy -= 40f * k
+        p.box(r - 210f * k, yy, 210f * k, 26f * k, LINE)
+        p.text("التاريخ: ${vc.dateLine}", r - 8f * k, yy + 8f * k, 10.5f * k, true)
+        p.box(mm, yy, 130f * k, 26f * k, LINE)
+        p.text("رقم السند: ${vc.number}", mm + 65f * k, yy + 8f * k, 10.5f * k, true, align = 0)
+        // الأخ / المحترم
+        yy -= 30f * k
+        if (vc.party.isNotBlank()) {
+            p.text("الأخ/ ${vc.party}", r, yy, 11.5f * k, true)
+            p.text("المحترم", mm, yy, 11.5f * k, true, align = -1)
+            yy -= 22f * k
+        }
+        wrap(vc.sentence, fr, 11f * k, w).forEach { l -> p.text(l, r, yy, 11f * k); yy -= 16f * k }
+        // المبلغ
+        yy -= 30f * k
+        val bh = 30f * k
+        p.box(r - 110f * k, yy, 110f * k, bh, GREEN, 0.8f, SOFT); p.text("المبلغ", r - 55f * k, yy + 10f * k, 11f * k, true, GREEN, align = 0)
+        p.box(r - 330f * k, yy, 210f * k, bh, GREEN, 1.2f); p.text(Fmt.money(vc.amount, false), r - 225f * k, yy + 9f * k, 14f * k, true, align = 0, rtl = false)
+        p.box(mm, yy, w - 340f * k, bh, LINE); p.text("العملة: ${vc.amount.currency.nameAr}", mm + (w - 340f * k) / 2, yy + 10f * k, 10f * k, align = 0)
+        // كتابةً
+        yy -= 34f * k
+        val wl = wrap(vc.words, fb, 11f * k, w - 16f * k)
+        val wh = (wl.size * 16f + 12f) * k
+        p.box(mm, yy - wh + 26f * k, w, wh, LINE)
+        var ty = yy + 10f * k
+        wl.forEach { l -> p.text(l, pw / 2, ty, 11f * k, true, align = 0); ty -= 16f * k }
+        yy -= wh + 6f * k
+        // البيان
+        val sl = wrap("البيان: " + vc.statement.ifBlank { "—" }, fr, 10.5f * k, w - 16f * k)
+        val sh = (sl.size * 15f + 12f) * k
+        p.box(mm, yy - sh + 26f * k, w, sh, LINE)
+        ty = yy + 10f * k
+        sl.forEach { l -> p.text(l, r - 8f * k, ty, 10.5f * k); ty -= 15f * k }
+        yy -= sh + 10f * k
+        // التفاصيل
+        vc.details.forEach { (a, b) ->
+            p.text("$a:", r, yy, 10f * k, true, MUTE)
+            p.text(b, r - 120f * k, yy, 10f * k)
+            yy -= 15f * k
+        }
+        // التواقيع
+        val sigs = vc.options.signatures.filter { it.isNotBlank() }.take(4)
+        if (sigs.isNotEmpty()) {
+            yy -= 34f * k
+            val cw = w / sigs.size
+            sigs.forEachIndexed { i, sname ->
+                val cx = r - cw * i - cw / 2
+                p.text(sname, cx, yy, 10.5f * k, true, align = 0)
+                p.line(cx - cw * 0.35f, yy - 24f * k, cx + cw * 0.35f, yy - 24f * k, MUTE, 0.6f)
+            }
+            yy -= 34f * k
+        }
+        if (vc.options.footer.isNotBlank()) { yy -= 10f * k; wrap(vc.options.footer, fr, 9.5f * k, w).forEach { l -> p.text(l, pw / 2, yy, 9.5f * k, c = MUTE, align = 0); yy -= 13f * k } }
+        // التذييل
+        val fy = maxOf(yy - 26f * k, 22f * k)
+        p.line(mm, fy + 12f * k, r, fy + 12f * k, LINE, 0.6f)
+        p.text("طُبع: ${vc.printedAt}", mm, fy, 8.5f * k, c = MUTE, align = -1, rtl = false)
+        p.text("صفحة 1 من 1", pw / 2, fy, 8.5f * k, c = MUTE, align = 0)
+        p.text("مرجع ${vc.reference}", r, fy, 8.5f * k, c = MUTE, rtl = false)
+    }
+
+    /** سند على بكرة حرارية: عمود واحد في الوسط. يعيد الارتفاع المستخدم. */
+    private fun rollDraw(p: Page, vc: app.rasidi.core.voucher.Voucher, top: Float): Float {
+        val mm = 8f; val r = pw - mm; val w = pw - 2 * mm; val cx = pw / 2
+        val base = if (pw < 200f) 7.2f else 8.5f
+        var yy = top - 18f
+        fun center(t: String, size: Float, bold: Boolean = false, rtl: Boolean = true) { wrap(t, if (bold) fb else fr, size, w).forEach { l -> p.text(l, cx, yy, size, bold, align = 0, rtl = rtl); yy -= size + 4f } }
+        fun dash() { p.line(mm, yy + 4f, r, yy + 4f, MUTE, 0.4f); yy -= 8f }
+        val pr = vc.options.profile
+        center(pr.name.ifBlank { "دفتري" }, base + 2.5f, true)
+        listOf(pr.city, pr.phone).filter { it.isNotBlank() }.forEach { center(it, base, rtl = ArabicShaper.hasRtl(it)) }
+        dash()
+        center(vc.kind.title, base + 3f, true)
+        center("رقم ${vc.number} · ${vc.dateLine}", base)
+        dash()
+        if (vc.party.isNotBlank()) center("الأخ/ ${vc.party} المحترم", base, true)
+        center(vc.sentence, base)
+        yy -= 2f
+        center(Fmt.money(vc.amount, false), base + 5f, true, rtl = false)
+        center(vc.words, base)
+        dash()
+        if (vc.statement.isNotBlank()) center("البيان: ${vc.statement}", base)
+        vc.details.forEach { (a, b) -> center("$a: $b", base) }
+        vc.options.signatures.filter { it.isNotBlank() }.take(2).forEach { sname -> yy -= 6f; center("$sname: ____________", base) }
+        if (vc.options.footer.isNotBlank()) { dash(); center(vc.options.footer, base - 0.5f) }
+        dash()
+        center("طُبع ${vc.printedAt} · رصيدي", base - 1f)
+        return top - yy
     }
 
     // ---------- تجميع ملف PDF ----------

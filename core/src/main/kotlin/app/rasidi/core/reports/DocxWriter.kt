@@ -72,7 +72,7 @@ object DocxWriter {
         "<w:p><w:pPr>" + (style?.let { "<w:pStyle w:val=\"$it\"/>" } ?: "") + (if (ltr) "<w:bidi w:val=\"0\"/>" else "<w:bidi/>") + (jc?.let { "<w:jc w:val=\"$it\"/>" } ?: "") +
             "<w:spacing w:before=\"0\" w:after=\"${if (style == null) 0 else 80}\"/></w:pPr>" + runs(text, bold) + "</w:p>"
 
-    private fun kvPara(k: String, v: String) = "<w:p><w:pPr><w:pStyle w:val=\"Meta\"/><w:bidi/></w:pPr>${run("$k: ", true)}${runs(v)}</w:p>"
+    private fun kvPara(k: String, v: String) = "<w:p><w:pPr><w:pStyle w:val=\"Meta\"/><w:bidi/></w:pPr>${if (k.isBlank()) "" else run("$k: ", true)}${runs(v)}</w:p>"
 
     private fun table(cols: List<Column>, rows: List<List<Cell>>, totals: List<List<Cell>>, repeatHeader: Boolean): String {
         val totalW = 9864 // عرض النص بين الهوامش (twips)

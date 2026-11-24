@@ -23,6 +23,10 @@ data class ReportDoc(
     val warnings: List<String> = emptyList(),
     /** اسم الملف دون الامتداد، مثل «رصيدي-كشف-الحساب-2026-11». */
     val fileBase: String,
+    /** للسند المفرد: بياناته الكاملة لقالب الطباعة الخاص (PDF) ومقاس الورق. */
+    val voucher: app.rasidi.core.voucher.Voucher? = null,
+    /** ملاحظة أسفل التقرير عند الطباعة (مثل ملاحظة كشف الحساب). */
+    val footerNote: String = "",
 ) {
     enum class Kind { REPORT, VOUCHER }
 

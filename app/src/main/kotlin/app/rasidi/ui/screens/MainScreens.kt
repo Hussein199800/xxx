@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,6 +81,8 @@ fun HomeScreen(vm: MainViewModel, nav: NavController) {
     val h = home ?: return
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Sp.md).padding(bottom = 170.dp)) {
         BigTitle("الرئيسية", sub = "أموالي اليوم · ${ReportDate.ar(vm.today())}")
+        HomeButtonsGrid(vm, nav)
+        Spacer(Modifier.height(Sp.sm))
         if (vm.device.driveRelinkNeeded) {
             RCard(tint = c.warnSoft, onClick = { nav.navigate(Routes.BACKUP) }) {
                 Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.CloudOff, null, tint = c.warn); Spacer(Modifier.width(8.dp)); Text("أعد ربط Google لاستئناف النسخ التلقائي", color = c.warn, style = MaterialTheme.typography.titleSmall) }
@@ -154,15 +157,15 @@ fun HomeScreen(vm: MainViewModel, nav: NavController) {
 
 object ReportDate { fun ar(d: LocalDate) = app.rasidi.core.reports.ReportBuilders.arDate(d) }
 
-enum class PeriodF(val ar: String) { MONTH("هذا الشهر"), LAST_MONTH("الشهر الماضي"), YEAR("هذه السنة"), ALL("الكل") }
+enum class PeriodF(val ar: String) { TODAY("اليوم"), MONTH("هذا الشهر"), LAST_MONTH("الشهر الماضي"), YEAR("هذه السنة"), ALL("الكل") }
 
 @Composable
-fun TransactionsScreen(vm: MainViewModel, nav: NavController) {
+fun TransactionsScreen(vm: MainViewModel, nav: NavController, initialPeriod: String = "") {
     val c = LocalR.current
     val v by vm.view.collectAsStateWithLifecycle()
     val view = v ?: return
     var q by remember { mutableStateOf("") }
-    var period by remember { mutableStateOf(PeriodF.MONTH) }
+    var period by remember { mutableStateOf(if (initialPeriod == "today") PeriodF.TODAY else PeriodF.MONTH) }
     var type by remember { mutableStateOf<TxnType?>(null) }
     var account by remember { mutableStateOf<String?>(null) }
     var category by remember { mutableStateOf<String?>(null) }
@@ -171,6 +174,7 @@ fun TransactionsScreen(vm: MainViewModel, nav: NavController) {
     var limit by remember { mutableIntStateOf(200) }
     val today = vm.today()
     val (from, to) = when (period) {
+        PeriodF.TODAY -> today to today
         PeriodF.MONTH -> today.withDayOfMonth(1) to today.withDayOfMonth(today.lengthOfMonth())
         PeriodF.LAST_MONTH -> today.minusMonths(1).withDayOfMonth(1) to today.minusMonths(1).let { it.withDayOfMonth(it.lengthOfMonth()) }
         PeriodF.YEAR -> today.withDayOfYear(1) to today.withDayOfYear(today.lengthOfYear())
@@ -194,7 +198,7 @@ fun TransactionsScreen(vm: MainViewModel, nav: NavController) {
     val ids = filtered.map { it.id }.toSet()
     val totals = remember(filtered, account, currency) { PeriodTotals.of(view.entries.filter { it.txnId in ids && (account == null || it.accountId == account) && (currency == null || it.amount.currency.code == currency) }, LocalDate.of(1900, 1, 1), LocalDate.of(2999, 1, 1)) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = Sp.md, end = Sp.md, bottom = 170.dp)) {
-        item { BigTitle("الحركات") }
+        item { BigTitle(if (initialPeriod == "today") "حركة اليوم" else "الحركات") }
         item {
             OutlinedTextField(q, { q = it }, placeholder = { Text("ابحث في البيان أو الطرف أو الفئة") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true,
                 shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth())
@@ -241,9 +245,13 @@ fun DebtsScreen(vm: MainViewModel, nav: NavController) {
     val rows by vm.debts.collectAsStateWithLifecycle()
     var dir by remember { mutableStateOf(DebtDirection.OWED_TO_ME) }
     var showSettled by remember { mutableStateOf(false) }
+    var byPerson by rememberSaveable { mutableStateOf(false) }
     val list = rows.filter { it.debt.direction == dir && !it.archived && (showSettled || it.status != DebtStatus.SETTLED) }.sortedWith(compareBy({ it.status == DebtStatus.SETTLED }, { it.nextDue ?: LocalDate.MAX }))
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Sp.md).padding(bottom = 170.dp)) {
         BigTitle("الديون")
+        ChipRow(listOf(false, true), byPerson, { if (it) "الأشخاص وكشوفهم" else "الديون" }, { byPerson = it })
+        Spacer(Modifier.height(Sp.xs))
+        if (byPerson) { PartiesList(vm, nav); return@Column }
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             SegmentedButton(dir == DebtDirection.OWED_TO_ME, { dir = DebtDirection.OWED_TO_ME }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("لي عند الناس") }
             SegmentedButton(dir == DebtDirection.I_OWE, { dir = DebtDirection.I_OWE }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("عليّ للناس") }
@@ -282,3 +290,58 @@ fun DebtsScreen(vm: MainViewModel, nav: NavController) {
     }
 }
 
+
+/** أزرار الواجهة الرئيسية (قابلة للتخصيص من الإعدادات): ثلاثة في كل صف بألوان هوية طاقتي. */
+@Composable
+fun HomeButtonsGrid(vm: MainViewModel, nav: NavController) {
+    val s by vm.settings.collectAsStateWithLifecycle()
+    val ids = s.homeButtons
+    if (ids.isEmpty()) return
+    ids.chunked(3).forEach { row ->
+        Row(Modifier.fillMaxWidth().padding(bottom = Sp.xs), horizontalArrangement = Arrangement.spacedBy(Sp.xs)) {
+            row.forEach { id -> HomeButton(id, Modifier.weight(1f)) { homeAction(id, nav) } }
+            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+        }
+    }
+}
+
+fun homeButtonStyle(id: String): Pair<androidx.compose.ui.graphics.vector.ImageVector, androidx.compose.ui.graphics.Color> = when (id) {
+    "receipt" -> Icons.Filled.Payments to CardTint.green
+    "payment" -> Icons.Filled.ShoppingBag to CardTint.pink
+    "exchange" -> Icons.Filled.CurrencyExchange to CardTint.sky
+    "statement" -> Icons.Filled.ReceiptLong to CardTint.violet
+    "today" -> Icons.Filled.Today to CardTint.amber
+    "debtpay" -> Icons.Filled.TaskAlt to CardTint.teal
+    "debt" -> Icons.Filled.Handshake to CardTint.amber
+    "search" -> Icons.Filled.Search to CardTint.slate
+    "inventory" -> Icons.Filled.Inventory2 to CardTint.amber
+    "calc" -> Icons.Filled.Calculate to CardTint.green
+    "report" -> Icons.Filled.Description to CardTint.violet
+    else -> Icons.Filled.CurrencyExchange to CardTint.sky
+}
+
+@Composable
+fun HomeButton(id: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val (icon, tint) = homeButtonStyle(id)
+    Row(modifier.clip(RoundedCornerShape(16.dp)).background(tint).clickable(onClick = onClick).heightIn(min = 50.dp).padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+        Icon(icon, null, tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(app.rasidi.ui.HomeButtons.ALL[id] ?: id, color = androidx.compose.ui.graphics.Color.White, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+    }
+}
+
+fun homeAction(id: String, nav: NavController) = when (id) {
+    "receipt" -> nav.navigate(Routes.add("income"))
+    "payment" -> nav.navigate(Routes.add("expense"))
+    "exchange" -> nav.navigate(Routes.add("transfer"))
+    "statement" -> nav.navigate(Routes.reports("statement"))
+    "today" -> nav.navigate(Routes.txns("today"))
+    "debtpay" -> nav.navigate(Routes.add("payment"))
+    "debt" -> nav.navigate(Routes.add("debt"))
+    "search" -> nav.navigate(Routes.TXNS)
+    "inventory" -> nav.navigate(Routes.INVENTORY)
+    "calc" -> nav.navigate(Routes.CALC)
+    "report" -> nav.navigate(Routes.reports())
+    else -> nav.navigate(Routes.RATES)
+}

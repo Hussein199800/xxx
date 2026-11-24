@@ -5,6 +5,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -322,49 +323,169 @@ fun CategoriesScreen(vm: MainViewModel, nav: NavController) {
     }
 }
 
+/** الإعدادات: فئات واضحة، كل فئة بأيقونة ملوّنة وعنوان وسطر يصف محتواها، وتفتح صفحتها. */
 @Composable
 fun SettingsScreen(vm: MainViewModel, nav: NavController) {
+    val s by vm.settings.collectAsStateWithLifecycle()
+    val demo by vm.demo.collectAsStateWithLifecycle()
+    val status by vm.status.collectAsStateWithLifecycle()
+    val opt = s.voucherOptions()
+    ScreenScaffold("الإعدادات", { nav.popBackStack() }) {
+        Column(verticalArrangement = Arrangement.spacedBy(Sp.xs)) {
+            ListCard("البيانات الشخصية", opt.profile.name.ifBlank { "اسمك أو اسم البيت، المدينة، الهاتف — تظهر في رأس السندات" }, Icons.Filled.Badge, CardTint.green) { nav.navigate(Routes.settings("profile")) }
+            ListCard("إعدادات الطباعة", "مقاس الورق: ${opt.paper.ar} · A4 أو A5 أو حراري 80/58 مم", Icons.Filled.Print, CardTint.pink) { nav.navigate(Routes.settings("print")) }
+            ListCard("إعدادات السندات", "التواقيع (${opt.signatures.size})، الرصيد المتبقي في السند، تذييل السند وكشف الحساب", Icons.Filled.Receipt, CardTint.sky) { nav.navigate(Routes.settings("vouchers")) }
+            ListCard("المظهر والخطوط", "${when (s.theme) { "light" -> "نهاري"; "dark" -> "ليلي"; else -> "تلقائي" }} · الخط ${(s.fontScale * 100).toInt()}% · إخفاء المبالغ", Icons.Filled.Contrast, CardTint.violet) { nav.navigate(Routes.settings("appearance")) }
+            ListCard("تخصيص أزرار الواجهة الرئيسية", "${s.homeButtons.size} أزرار: ${s.homeButtons.take(3).joinToString("، ") { app.rasidi.ui.HomeButtons.ALL[it] ?: it }}…", Icons.Filled.Apps, CardTint.amber) { nav.navigate(Routes.settings("home")) }
+            ListCard("العملات وأسعار الصرف", "الأسعار اليدوية، غرام الذهب، قاعدة الليرة السورية", Icons.Filled.CurrencyExchange, CardTint.teal) { nav.navigate(Routes.settings("currency")) }
+            ListCard("النسخ الاحتياطي و\u2066Google Drive\u2069", status.sub, Icons.Filled.CloudUpload, CardTint.green) { nav.navigate(Routes.BACKUP) }
+            ListCard("الأمان والقفل", if (vm.device.appLock) "مقفل بالبصمة أو رمز الجهاز" else "قفل التطبيق غير مفعّل", Icons.Filled.Lock, CardTint.slate) { nav.navigate(Routes.settings("security")) }
+            ListCard("الدفتر التجريبي", if (demo) "مفعّل الآن: بيانات اصطناعية" else "جرّب التطبيق دون المساس بدفترك", Icons.Filled.Science, CardTint.amber, badge = if (demo) "مفعّل" else null) { nav.navigate(Routes.settings("demo")) }
+            ListCard("عن التطبيق", "رصيدي ${app.rasidi.BuildConfig.VERSION_NAME} · الخصوصية", Icons.Filled.Info, CardTint.slate) { nav.navigate(Routes.settings("about")) }
+        }
+    }
+}
+
+@Composable
+fun SettingsSectionScreen(vm: MainViewModel, nav: NavController, section: String) {
     val c = LocalR.current
     val s by vm.settings.collectAsStateWithLifecycle()
     val demo by vm.demo.collectAsStateWithLifecycle()
-    var lock by remember { mutableStateOf(vm.device.appLock) }
-    ScreenScaffold("الإعدادات", { nav.popBackStack() }) {
-        SectionHeader("المظهر")
-        RCard {
-            ChipRow(listOf("system", "light", "dark"), s.theme, { when (it) { "light" -> "نهاري"; "dark" -> "ليلي"; else -> "حسب النظام" } }, { vm.setSetting("ui.theme", it) })
-            Spacer(Modifier.height(Sp.xs))
-            Text("حجم الخط", style = MaterialTheme.typography.titleSmall, color = c.txt)
-            // خيارات منفصلة مع معاينة «أ» كما في طاقتي
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(0.85f to "أصغر", 0.92f to "صغير", 1f to "عادي", 1.12f to "كبير", 1.25f to "أكبر").forEach { (v, l) ->
-                    val on = kotlin.math.abs(s.fontScale - v) < 0.01f
-                    Column(Modifier.weight(1f).clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).background(if (on) c.priSoft else c.soft)
-                        .clickable { vm.setSetting("ui.fontScale", v.toString()) }.heightIn(min = 64.dp).padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        Text("أ", fontSize = (15 * v).sp, color = if (on) c.pri else c.txt, style = MaterialTheme.typography.titleMedium)
-                        Text(l, style = MaterialTheme.typography.labelSmall, color = if (on) c.pri else c.mute)
-                    }
+    fun save(k: String, v: String) = vm.setSetting(k, v)
+    val titles = mapOf("profile" to "البيانات الشخصية", "print" to "إعدادات الطباعة", "vouchers" to "إعدادات السندات", "appearance" to "المظهر والخطوط",
+        "home" to "تخصيص أزرار الرئيسية", "currency" to "العملات وأسعار الصرف", "security" to "الأمان والقفل", "demo" to "الدفتر التجريبي", "about" to "عن التطبيق")
+    ScreenScaffold(titles[section] ?: "الإعدادات", { nav.popBackStack() }) {
+        when (section) {
+            "profile" -> {
+                var name by remember { mutableStateOf(s.get("profile.name")) }
+                var city by remember { mutableStateOf(s.get("profile.city")) }
+                var phone by remember { mutableStateOf(s.get("profile.phone")) }
+                RCard {
+                    Text("تظهر في رأس كل سند وفي المشاركة النصية.", color = c.mute, style = MaterialTheme.typography.bodySmall)
+                    TextIn(name, { name = it }, "الاسم أو اسم البيت")
+                    TextIn(city, { city = it }, "المدينة والبلد")
+                    TextIn(phone, { phone = it }, "رقم الهاتف", keyboard = androidx.compose.ui.text.input.KeyboardType.Phone)
+                    PrimaryButton("احفظ", { save("profile.name", name.trim()); save("profile.city", city.trim()); save("profile.phone", phone.trim()); vm.message("حُفظت البيانات الشخصية") }, Modifier.fillMaxWidth())
                 }
             }
-        }
-        SectionHeader("الخصوصية والأمان")
-        RCard {
-            Row(verticalAlignment = Alignment.CenterVertically) { Switch(s.hideAmounts, { vm.setSetting("ui.hideAmounts", if (it) "1" else "0") }); Spacer(Modifier.width(8.dp)); Text("إخفاء المبالغ") }
-            Row(verticalAlignment = Alignment.CenterVertically) { Switch(lock, { lock = it; vm.device.appLock = it }); Spacer(Modifier.width(8.dp)); Text("قفل التطبيق بالبصمة أو رمز الجهاز") }
-        }
-        SectionHeader("الليرة السورية")
-        RCard {
-            Text("قاعدة: 100 ليرة قديمة = 1 ليرة جديدة. طابق تاريخ النفاذ ونهاية التداول مع إعلان المصرف المركزي.", style = MaterialTheme.typography.bodySmall, color = c.mute)
-            KeyValue("تاريخ النفاذ (الافتراضي)", SyrianRedenomination.DEFAULT.effectiveDate.toString())
-            KeyValue("نهاية التداول", SyrianRedenomination.DEFAULT.withdrawalEnd?.toString() ?: "غير محددة")
-        }
-        SectionHeader("الدفتر")
-        RCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(demo, { vm.switchDemo(it); nav.navigate(Routes.HOME) { popUpTo(0) } }); Spacer(Modifier.width(8.dp))
-                Column { Text("الدفتر التجريبي"); Text("قاعدة منفصلة تماماً عن دفترك الفعلي", style = MaterialTheme.typography.bodySmall, color = c.mute) }
+            "print" -> {
+                val paper = s.voucherOptions().paper
+                RCard {
+                    Text("مقاس الورق للسندات", style = MaterialTheme.typography.titleSmall)
+                    app.rasidi.core.voucher.Paper.values().forEach { p ->
+                        Row(Modifier.fillMaxWidth().clickable { save("print.paper", p.name) }.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(p == paper, { save("print.paper", p.name) }); Text(p.ar + when (p) { app.rasidi.core.voucher.Paper.A4 -> " — طابعة عادية"; app.rasidi.core.voucher.Paper.A5 -> " — نصف A4"; else -> " — طابعة حرارية" })
+                        }
+                    }
+                    Text("الطباعة تتم عبر خدمة الطباعة في أندرويد: طابعة شبكة، أو تطبيق الطابعة الحرارية، أو «حفظ كـ PDF». التقارير تُطبع دائماً على A4.", style = MaterialTheme.typography.bodySmall, color = c.mute)
+                }
             }
-            if (demo) SoftButton("املأ الدفتر التجريبي ببيانات اصطناعية", { vm.launchSafe("تم") { vm.repo.replaceAll(app.rasidi.core.demo.DemoData.snapshot(vm.today())) } })
+            "vouchers" -> {
+                var showBal by remember { mutableStateOf(s.get("voucher.showBalance", "1") == "1") }
+                val sigs = remember { s.get("voucher.signatures", "المستلم|المحاسب").split('|').let { l -> MutableList(4) { i -> l.getOrElse(i) { "" } }.toMutableStateList() } }
+                var footer by remember { mutableStateOf(s.get("voucher.footer")) }
+                var stFooter by remember { mutableStateOf(s.get("statement.footer")) }
+                RCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) { Switch(showBal, { showBal = it; save("voucher.showBalance", if (it) "1" else "0") }); Spacer(Modifier.width(8.dp)); Text("إضافة الرصيد المتبقي في سندات الديون") }
+                }
+                SectionHeader("توقيع السندات")
+                RCard {
+                    listOf("الأول", "الثاني", "الثالث", "الرابع").forEachIndexed { i, l -> TextIn(sigs[i], { sigs[i] = it }, "توقيع السند $l") }
+                }
+                SectionHeader("التذييل")
+                RCard {
+                    TextIn(footer, { footer = it }, "ملاحظة أسفل السند (مثل: شكراً لتعاملكم)", singleLine = false)
+                    TextIn(stFooter, { stFooter = it }, "ملاحظة أسفل كشف الحساب عند الطباعة", singleLine = false)
+                }
+                Spacer(Modifier.height(Sp.sm))
+                PrimaryButton("احفظ", {
+                    save("voucher.signatures", sigs.map { it.replace("|", " ").trim() }.filter { it.isNotBlank() }.joinToString("|"))
+                    save("voucher.footer", footer.trim()); save("statement.footer", stFooter.trim()); vm.message("حُفظت إعدادات السندات")
+                }, Modifier.fillMaxWidth())
+            }
+            "appearance" -> {
+                RCard {
+                    Text("الوضع", style = MaterialTheme.typography.titleSmall)
+                    ChipRow(listOf("system", "light", "dark"), s.theme, { when (it) { "light" -> "نهاري"; "dark" -> "ليلي"; else -> "تلقائي" } }, { save("ui.theme", it) })
+                    Spacer(Modifier.height(Sp.sm))
+                    Text("حجم الخط", style = MaterialTheme.typography.titleSmall, color = c.txt)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(0.85f to "أصغر", 0.92f to "صغير", 1f to "عادي", 1.12f to "كبير", 1.25f to "أكبر").forEach { (v, l) ->
+                            val on = kotlin.math.abs(s.fontScale - v) < 0.01f
+                            Column(Modifier.weight(1f).clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).background(if (on) c.priSoft else c.soft)
+                                .clickable { save("ui.fontScale", v.toString()) }.heightIn(min = 64.dp).padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                                Text("أ", fontSize = (15 * v).sp, color = if (on) c.pri else c.txt, style = MaterialTheme.typography.titleMedium)
+                                Text(l, style = MaterialTheme.typography.labelSmall, color = if (on) c.pri else c.mute)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(Sp.sm))
+                    Row(verticalAlignment = Alignment.CenterVertically) { Switch(s.hideAmounts, { save("ui.hideAmounts", if (it) "1" else "0") }); Spacer(Modifier.width(8.dp)); Text("إخفاء المبالغ (يمكن التبديل من زر العين في الأعلى)") }
+                }
+            }
+            "home" -> {
+                val chosen = remember { s.homeButtons.toMutableStateList() }
+                Text("اختر حتى 9 أزرار ورتّبها. تظهر أعلى الرئيسية ثلاثة في كل صف.", color = c.mute, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(Sp.xs))
+                RCard {
+                    chosen.toList().forEachIndexed { i, id ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            HomeButton(id, Modifier.weight(1f)) {}
+                            IconButton(onClick = { if (i > 0) { chosen.removeAt(i); chosen.add(i - 1, id) } }) { Icon(Icons.Filled.KeyboardArrowUp, "للأعلى") }
+                            IconButton(onClick = { if (i < chosen.lastIndex) { chosen.removeAt(i); chosen.add(i + 1, id) } }) { Icon(Icons.Filled.KeyboardArrowDown, "للأسفل") }
+                            IconButton(onClick = { chosen.remove(id) }) { Icon(Icons.Filled.RemoveCircleOutline, "إزالة", tint = c.danger) }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    if (chosen.isEmpty()) Text("لا أزرار: لن يظهر الصف في الرئيسية", color = c.mute)
+                }
+                SectionHeader("أزرار متاحة")
+                RCard {
+                    app.rasidi.ui.HomeButtons.ALL.keys.filter { it !in chosen }.forEach { id ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            HomeButton(id, Modifier.weight(1f)) {}
+                            IconButton(onClick = { if (chosen.size < 9) chosen.add(id) }, enabled = chosen.size < 9) { Icon(Icons.Filled.AddCircleOutline, "إضافة", tint = c.pri) }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                    }
+                }
+                Spacer(Modifier.height(Sp.sm))
+                Row(horizontalArrangement = Arrangement.spacedBy(Sp.xs)) {
+                    PrimaryButton("احفظ", { save("home.buttons", chosen.joinToString(",")); vm.message("حُفظت أزرار الرئيسية") }, Modifier.weight(1f))
+                    SoftButton("الافتراضي", { chosen.clear(); chosen.addAll(app.rasidi.ui.HomeButtons.DEFAULT.split(',')) }, Modifier.weight(1f))
+                }
+            }
+            "currency" -> {
+                ListCard("الأسعار", "أدخل «1 USD = 40 TRY» أو سعر غرام الذهب بأي عيار", Icons.Filled.CurrencyExchange, CardTint.sky) { nav.navigate(Routes.RATES) }
+                Spacer(Modifier.height(Sp.sm))
+                RCard {
+                    Text("الليرة السورية", style = MaterialTheme.typography.titleSmall)
+                    Text("قاعدة: 100 ليرة قديمة = 1 ليرة جديدة. القديمة والجديدة وحدتان منفصلتان ولا يُطبّق المعامل مرتين. طابق تاريخ النفاذ مع إعلان المصرف المركزي.", style = MaterialTheme.typography.bodySmall, color = c.mute)
+                    KeyValue("تاريخ النفاذ (الافتراضي)", SyrianRedenomination.DEFAULT.effectiveDate.toString())
+                    KeyValue("نهاية التداول", SyrianRedenomination.DEFAULT.withdrawalEnd?.toString() ?: "غير محددة")
+                }
+            }
+            "security" -> {
+                var lock by remember { mutableStateOf(vm.device.appLock) }
+                RCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) { Switch(lock, { lock = it; vm.device.appLock = it }); Spacer(Modifier.width(8.dp)); Text("قفل التطبيق بالبصمة أو رمز الجهاز") }
+                    Text("دفترك محفوظ على الجهاز فقط ومستبعد من نسخ أندرويد التلقائي. النسخ عبر ملف .rasidi المشفّر.", style = MaterialTheme.typography.bodySmall, color = c.mute)
+                }
+            }
+            "demo" -> RCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(demo, { vm.switchDemo(it); nav.navigate(Routes.HOME) { popUpTo(0) } }); Spacer(Modifier.width(8.dp))
+                    Column { Text("الدفتر التجريبي"); Text("قاعدة منفصلة تماماً عن دفترك الفعلي", style = MaterialTheme.typography.bodySmall, color = c.mute) }
+                }
+                if (demo) SoftButton("املأ الدفتر التجريبي ببيانات اصطناعية", { vm.launchSafe("تم") { vm.repo.replaceAll(app.rasidi.core.demo.DemoData.snapshot(vm.today())) } })
+            }
+            "about" -> RCard {
+                Text("رصيدي ${app.rasidi.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
+                Text("دفتر مالي شخصي للبيت: مصروف ودخل وديون وذهب وجرد وزكاة، بالعربية وبلا إنترنت.", color = c.mute)
+                Spacer(Modifier.height(Sp.xs))
+                Text("الخصوصية", style = MaterialTheme.typography.titleSmall)
+                Text("لا حساب ولا خوادم ولا إعلانات ولا تحليلات. بياناتك على جهازك فقط، وتُنسخ إلى Google Drive مشفّرة إن ربطته بنفسك.", style = MaterialTheme.typography.bodySmall, color = c.mute)
+            }
         }
-        Text("رصيدي ${app.rasidi.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = c.mute, modifier = Modifier.padding(top = Sp.md))
     }
 }

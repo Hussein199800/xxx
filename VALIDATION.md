@@ -1,4 +1,4 @@
-# نتائج التحقق — رصيدي 1.1.0-beta1
+# نتائج التحقق — رصيدي 1.2.0-beta1
 
 تاريخ التحقق: 2026-11-23. كل ما يلي جرى فعلاً في بيئة البناء، ما لم يُذكر غير ذلك صراحة.
 
@@ -18,12 +18,12 @@
 python3 scripts/verify_samples.py samples build/verify
 ./gradlew :app:connectedDebugAndroidTest     # يحتاج جهازاً أو محاكياً
 ```
-النتيجة: **87 اختباراً، 0 إخفاق**. lint: 0 أخطاء، تحذيران تنسيقيان (ModifierParameter). البناء الكامل من الصفر في 3 دقائق و49 ثانية.
+النتيجة: **96 اختباراً، 0 إخفاق**. lint: 0 أخطاء، تحذيران تنسيقيان (ModifierParameter). البناء الكامل من الصفر في 3 دقائق و49 ثانية.
 
 ## الحزم
 | الملف | الحجم | SHA-256 |
 |---|---|---|
-| `dist/rasidi-1.1.0-beta1.apk` (`app.rasidi.ledger.beta`، versionCode 2، R8، موقّع بمفتاح الاختبار المشترك) | 3.4 MB | `5583f75eaed0c639f7999e4a7acebd7a422fc42c57890be9f8c15995e0deb587` |
+| `dist/rasidi-1.2.0-beta1.apk` (`app.rasidi.ledger.beta`، versionCode 3، R8، موقّع بمفتاح الاختبار المشترك) | 3.5 MB | `61d1422d7ee470f1fcd982c248e53c917180c62a0d2af30274b61922cd84beb6` |
 | `app-debug.apk` (`app.rasidi.ledger.debug`، غير مصغّر، يُولَّد في CI) | 20 MB | يُطبع في CI |
 
 بصمة مفتاح الاختبار: SHA-1 `8D:E3:AE:52:07:3C:6D:B6:DB:31:44:0C:2F:21:26:65:C1:00:AA:2E`. الإصدار الموقّع (`app.rasidi.ledger`) **ينتظر مفتاح التوقيع الفعلي** (انظر README وCI).
@@ -55,6 +55,13 @@ python3 scripts/verify_samples.py samples build/verify
 - شراء الذهب وبيعه بلا تكرار: `goldBuySellNoDuplication`. السالب يحتاج إذناً: `negativeBalanceNeedsPermission`. التعديل مع سجل والتراجع السريع: `editSimpleKeepsAuditAndUndoRecent`. تاريخ قرب منتصف الليل: `midnightDateKeepsBusinessDay`.
 - كشف حساب، وسند تبديل، وكشف دين، وتقرير سنوي بالصيغ الثلاث فُتحت وفُحصت: انظر قسم التصدير.
 
+### السندات وكشف حساب الشخص (1.2) — ✅
+- التفقيط: `TafqitTest` (خمسمائة، أحد عشر، ألفان، مليونان وخمسمائة ألف، الكسور بالسنت/القرش).
+- نوع السند من الحركة (قبض، صرف، صرف عملات، إشعار مدين/دائن)، والرصيد المتبقي، ورقم السند الثابت، والمشاركة النصية: `VoucherTest.kindsAndWords`.
+- قالب السند على A4 وA5 وحراري 80 و58 مم، وإشعار مدين بصيغة Word، وكشف حساب شخص بصيغتي PDF وExcel: فُتحت ضمن `scripts/verify_samples.py` (`samples/vouchers/`).
+- كشف الشخص (عليه، له، الرصيد، رصيد سابق): `VoucherTest.partyStatement`.
+- الطباعة عبر خدمة الطباعة في Android **لم تُجرَّب على طابعة حقيقية**.
+
 ### 4. الجرد والزكاة — ✅
 - مثال القبول: 11,300 ← وعاء 11,500 ← **287.50 USD**، ودفعات 120 USD و2,000 TRY و14,100 SYP ⇒ «المتبقي 0.00»: `ZakatTest.acceptanceExample`، وعبر Room والنسخ في `BackupRestoreTest`.
 - النصاب بلغ الحد بالضبط، وقيمة أقل منه بكسر رغم أن عرضها مقرّب إلى 8,500.00: `nisabExactlyReachedIsDue`.
@@ -75,7 +82,7 @@ python3 scripts/verify_samples.py samples build/verify
 | استيراد CSV مع دفعة مكررة | ✅ `CsvImportTest`، `CsvImportRepoTest.reimportSameBatchDoesNotDuplicate` |
 
 ## التصدير: فتح الملفات فعلياً
-`scripts/verify_samples.py` فتح 21 ملفاً (7 تقارير × 3 صيغ): **117/117 فحصاً ناجحاً** (`docs/verify-samples.md`).
+`scripts/verify_samples.py` فتح 21 ملفاً (7 تقارير × 3 صيغ): **148/148 فحصاً ناجحاً** (`docs/verify-samples.md`).
 - **XLSX** (openpyxl + LibreOffice Calc): كل الأوراق RTL، صف العناوين مثبّت (A2)، الفلترة مفعّلة، المبالغ خلايا رقمية والتواريخ خلايا تاريخية قابلة للفرز (239/239)، دخل كل عملة في التفاصيل يطابق الملخّص. الأرقام فوق 15 خانة لها عمود نصّي دقيق (`longNumbersKeepExactTextColumn`).
 - **DOCX** (python-docx + LibreOffice Writer): جداول `bidiVisual`، تكرار رأس الجدول، تذييل «صفحة X من Y». حوّله LibreOffice إلى 9 صفحات.
 - **PDF** (pdfplumber + poppler): A4، خط Cairo مضمَّن (CID TrueType + ToUnicode)، النص قابل للاستخراج، الترويسة والترقيم في كل صفحة، التقرير السنوي 8 صفحات، السند بقالب A5.
@@ -101,7 +108,7 @@ txns=10077 entries=10099
 | | |
 |---|---|
 | الجهاز | محاكي Android 14 (API 34، google_apis، x86_64، Pixel 5) **بمحاكاة برمجية كاملة (TCG، بلا KVM)** |
-| الحزمة | `dist/rasidi-1.1.0-beta1.apk` (`app.rasidi.ledger.beta`، versionCode 2، R8، موقّع بمفتاح الاختبار المشترك) | 3.4 MB | `5583f75eaed0c639f7999e4a7acebd7a422fc42c57890be9f8c15995e0deb587` |
+| الحزمة | `dist/rasidi-1.2.0-beta1.apk` (`app.rasidi.ledger.beta`، versionCode 3، R8، موقّع بمفتاح الاختبار المشترك) | 3.5 MB | `61d1422d7ee470f1fcd982c248e53c917180c62a0d2af30274b61922cd84beb6` |
 
 ما تحقق فعلاً على المحاكي (على نسخة 1.0.0-beta1، أما نسخة 1.1.0 فلم تُجرَّب على محاكٍ):
 - ✅ التثبيت نجح (`adb install` ← Success).

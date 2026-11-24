@@ -30,6 +30,9 @@ import app.rasidi.ui.theme.Sp
 
 object Routes {
     const val HOME = "home"; const val TXNS = "txns"; const val CALC = "calc"; const val DEBTS = "debts"; const val MORE = "more"
+    const val PARTY = "party/{name}"; fun party(n: String) = "party/" + android.net.Uri.encode(n)
+    const val SETTINGS_SECTION = "settings/{section}"; fun settings(sec: String) = "settings/$sec"
+    const val TXNS_PERIOD = "txnsp/{period}"; fun txns(period: String) = "txnsp/$period"
     const val MEMBERS = "members"; const val BUDGETS = "budgets"; const val RECURRING = "recurring"
     const val ONBOARD = "onboard"
     const val ADD = "add/{type}?ref={ref}"; fun add(type: String, ref: String = "") = "add/$type?ref=$ref"
@@ -99,6 +102,9 @@ fun RasidiRoot(vm: MainViewModel, startOverride: String? = null) {
             composable(Routes.CATEGORIES) { CategoriesScreen(vm, nav) }
             composable(Routes.CALC) { CalculatorScreen(vm, nav) }
             composable(Routes.MEMBERS) { MembersScreen(vm, nav) }
+            composable(Routes.PARTY) { e -> PartyStatementScreen(vm, nav, e.arguments?.getString("name").orEmpty()) }
+            composable(Routes.SETTINGS_SECTION) { e -> SettingsSectionScreen(vm, nav, e.arguments?.getString("section").orEmpty()) }
+            composable(Routes.TXNS_PERIOD) { e -> TransactionsScreen(vm, nav, e.arguments?.getString("period").orEmpty()) }
             composable(Routes.BUDGETS) { BudgetsScreen(vm, nav) }
             composable(Routes.RECURRING) { RecurringScreen(vm, nav) }
         }
