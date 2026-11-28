@@ -73,6 +73,42 @@ class HouseholdRepoTest {
         db.close()
     }
 
+    /** R01/R02: ترحيل Room وترحيل النسخة يوحّدان الأسماء بالطريقة نفسها (Kotlin trim لا TRIM في SQLite). */
+    @Test fun roomAndBackupMigrationNormalizePartyNamesIdentically() = runBlocking {
+        val ctx = TestUtil.ctx
+        ctx.deleteDatabase("v2ws.db")
+        val json = Json.parseToJsonElement(File(System.getProperty("rasidi.schemas.dir")!!, "app.rasidi.data.RasidiDatabase/2.json").readText()).jsonObject["database"]!!.jsonObject
+        val helper = FrameworkSQLiteOpenHelperFactory().create(SupportSQLiteOpenHelper.Configuration.builder(ctx).name("v2ws.db").callback(object : SupportSQLiteOpenHelper.Callback(2) {
+            override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                json["entities"]!!.jsonArray.forEach { e ->
+                    val o = e.jsonObject; val n = o["tableName"]!!.jsonPrimitive.content
+                    db.execSQL(o["createSql"]!!.jsonPrimitive.content.replace("\${TABLE_NAME}", n))
+                    o["indices"]?.jsonArray?.forEach { i -> db.execSQL(i.jsonObject["createSql"]!!.jsonPrimitive.content.replace("\${TABLE_NAME}", n)) }
+                }
+                json["setupQueries"]!!.jsonArray.forEach { db.execSQL(it.jsonPrimitive.content) }
+            }
+            override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+        }).build())
+        val names = listOf("خالد\t", "خالد\u00A0", "خالد", " سامر\n")
+        helper.writableDatabase.apply {
+            names.forEachIndexed { i, n -> execSQL("INSERT INTO debts (id,party,direction,principalMinor,currency,date,dueDate,note,txnId,archived,createdAtUtc) VALUES (?,?,'I_OWE',100,'USD','2026-01-01',NULL,'',NULL,0,0)", arrayOf<Any>("d$i", n)) }
+        }
+        helper.close()
+        val db = RasidiDatabase.open(ctx, "v2ws.db")
+        val room = TestUtil.repo(db).snapshot()
+        db.close()
+        // المسار الثاني: ترحيل حمولة نسخة v2 بالأسماء نفسها
+        val debts = names.mapIndexed { i, n -> app.rasidi.core.data.DebtEntity("d$i", n, "I_OWE", 100, "USD", "2026-01-01", null, "", null, false, 0) }
+        val v3 = app.rasidi.core.backup.Snapshot(debts = debts)
+        val asV2 = Json.parseToJsonElement(app.rasidi.core.backup.BackupJson.encodeToString(app.rasidi.core.backup.Snapshot.serializer(), v3)).jsonObject.let { JsonObject(it - "parties") }
+        val payload = buildJsonObject { put("fingerprint", ""); put("counts", JsonObject(emptyMap())); put("snapshot", asV2) }
+        val migrated = app.rasidi.core.backup.BackupJson.decodeFromString(app.rasidi.core.backup.BackupFormat.Payload.serializer(), app.rasidi.core.backup.BackupMigrations.upgrade(2, payload.toString())).snapshot
+        assertEquals(listOf("سامر", "خالد").sorted(), room.parties.map { it.name }.sorted())
+        assertEquals(room.parties.sortedBy { it.id }, migrated.parties.sortedBy { it.id })
+        assertEquals(room.debts.sortedBy { it.id }.map { it.party }, migrated.debts.sortedBy { it.id }.map { it.party })
+        assertTrue(room.debts.all { it.party == "خالد" || it.party == "سامر" })
+    }
+
     @Test fun addPartyWithOpeningAndRename() = runBlocking {
         val repo = TestUtil.repo(TestUtil.memDb()); repo.ensureCategories()
         repo.addParty("أم علي", "+963 900", "", 0, Currencies.USD, true, d, "p1")

@@ -5,6 +5,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -72,13 +75,17 @@ object BackupFormat {
     enum class Reason { TOO_LARGE, NOT_RASIDI, CORRUPT_HEADER, NEWER_FORMAT, NEWER_DATA, WRONG_CODE_OR_TAMPERED, CORRUPT_PAYLOAD, INVALID_DATA }
 
     fun encrypt(snapshot: Snapshot, code: RecoveryCode, installId: String, kind: String, nowUtc: Long, appVersion: String): Pair<Header, ByteArray> {
-        val salt = ByteArray(16).also(rnd::nextBytes)
-        val nonce = ByteArray(12).also(rnd::nextBytes)
-        val header = Header(FORMAT_VERSION, DATA_VERSION, UUID.randomUUID().toString(), nowUtc, "rasidi/$appVersion", installId, kind, b64(salt), b64(nonce))
-        val headerBytes = json.encodeToString(Header.serializer(), header).toByteArray(Charsets.UTF_8)
         val canon = snapshot.canonical()
         val payload = Payload(canon.fingerprint(), canon.counts(), canon)
-        val plain = gzip(BackupJson.encodeToString(Payload.serializer(), payload).toByteArray(Charsets.UTF_8))
+        return seal(BackupJson.encodeToString(Payload.serializer(), payload), DATA_VERSION, code, installId, kind, nowUtc, appVersion)
+    }
+
+    private fun seal(payloadJson: String, dataVersion: Int, code: RecoveryCode, installId: String, kind: String, nowUtc: Long, appVersion: String): Pair<Header, ByteArray> {
+        val salt = ByteArray(16).also(rnd::nextBytes)
+        val nonce = ByteArray(12).also(rnd::nextBytes)
+        val header = Header(FORMAT_VERSION, dataVersion, UUID.randomUUID().toString(), nowUtc, "rasidi/$appVersion", installId, kind, b64(salt), b64(nonce))
+        val headerBytes = json.encodeToString(Header.serializer(), header).toByteArray(Charsets.UTF_8)
+        val plain = gzip(payloadJson.toByteArray(Charsets.UTF_8))
         val aad = MAGIC + u32(headerBytes.size) + headerBytes
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(deriveKey(code.bytes, salt), "AES"), GCMParameterSpec(128, nonce))
@@ -86,6 +93,13 @@ object BackupFormat {
         val ct = c.doFinal(plain)
         return header to (aad + ct)
     }
+
+    /** للاختبارات فقط: يختم حمولة JSON خاماً بإصدار بيانات محدد (لمحاكاة نسخ قديمة أو معدّلة). */
+    internal fun sealRaw(payloadJson: String, dataVersion: Int, code: RecoveryCode, installId: String, kind: String, nowUtc: Long, appVersion: String): ByteArray =
+        seal(payloadJson, dataVersion, code, installId, kind, nowUtc, appVersion).second
+
+    /** للاختبارات فقط: يفكّ الحمولة الخام دون ترحيل أو تحقق. */
+    internal fun openRaw(file: ByteArray, code: RecoveryCode): JsonObject = Json.parseToJsonElement(plainText(readHeader(file), file, code)).jsonObject
 
     /** يقرأ الترويسة فقط (بلا رمز) للتحقق المبدئي وعرض التاريخ. */
     fun readHeader(file: ByteArray): Header {
@@ -101,11 +115,13 @@ object BackupFormat {
         return header
     }
 
-    data class Opened(val header: Header, val payload: Payload)
+    /**
+     * [sourceDataVersion]/[sourceFingerprint]: إصدار النسخة وبصمتها كما كُتبت (تحققنا منها على المحتوى الخام).
+     * [payload] بعد الترحيل: بصمته وأعداده محسوبة للّقطة الحالية، وهي ما تُطابَق به الاستعادة.
+     */
+    data class Opened(val header: Header, val payload: Payload, val sourceDataVersion: Int = header.dataVersion, val sourceFingerprint: String = payload.fingerprint)
 
-    /** يفكّ التشفير ويتحقق من السلامة والبصمة والعلاقات قبل أي كتابة. */
-    fun decrypt(file: ByteArray, code: RecoveryCode): Opened {
-        val header = readHeader(file)
+    private fun plainText(header: Header, file: ByteArray, code: RecoveryCode): String {
         val len = ByteBuffer.wrap(file, MAGIC.size, 4).int
         val aadEnd = MAGIC.size + 4 + len
         val aad = file.copyOfRange(0, aadEnd)
@@ -120,17 +136,40 @@ object BackupFormat {
         } catch (e: IllegalArgumentException) {
             throw BackupException(Reason.CORRUPT_HEADER, "ترويسة الملف تالفة")
         }
-        val jsonText = try { String(gunzip(plain), Charsets.UTF_8) } catch (e: Exception) { throw BackupException(Reason.CORRUPT_PAYLOAD, "محتوى النسخة تالف") }
+        return try { String(gunzip(plain), Charsets.UTF_8) } catch (e: Exception) { throw BackupException(Reason.CORRUPT_PAYLOAD, "محتوى النسخة تالف") }
+    }
+
+    /**
+     * يفكّ التشفير ويتحقق من السلامة والبصمة والعلاقات قبل أي كتابة.
+     * البصمة تُتحقق لكل الإصدارات على اللقطة الخام قبل الترحيل (بصيغة كاتبها نفسه: JSON مضغوط حتمي الترتيب)،
+     * ثم تُرحَّل اللقطة وتُحسب بصمتها الحالية.
+     */
+    fun decrypt(file: ByteArray, code: RecoveryCode): Opened {
+        val header = readHeader(file)
+        val jsonText = plainText(header, file, code)
+        val raw = try { Json.parseToJsonElement(jsonText).jsonObject } catch (e: Exception) { throw BackupException(Reason.CORRUPT_PAYLOAD, "محتوى النسخة غير مقروء") }
+        val rawSnap = raw["snapshot"] as? JsonObject ?: throw BackupException(Reason.CORRUPT_PAYLOAD, "النسخة بلا لقطة")
+        val claimed = (raw["fingerprint"] as? JsonPrimitive)?.contentOrNull ?: throw BackupException(Reason.CORRUPT_PAYLOAD, "النسخة بلا بصمة")
+        if (sha256(rawSnap.toString()) != claimed) throw BackupException(Reason.INVALID_DATA, "بصمة المحتوى لا تطابق")
+        val claimedCounts = raw["counts"] as? JsonObject ?: throw BackupException(Reason.CORRUPT_PAYLOAD, "النسخة بلا أعداد")
+        for ((k, v) in claimedCounts) {
+            val n = (v as? JsonPrimitive)?.intOrNull
+            val actual = (rawSnap[k] as? JsonArray)?.size
+            if (n == null || actual != n) throw BackupException(Reason.INVALID_DATA, "عدد السجلات ($k) لا يطابق المحتوى")
+        }
         val upgraded = BackupMigrations.upgrade(header.dataVersion, jsonText)
-        val payload = try { BackupJson.decodeFromString(Payload.serializer(), upgraded) } catch (e: Exception) {
+        val decoded = try { BackupJson.decodeFromString(Payload.serializer(), upgraded) } catch (e: Exception) {
             throw BackupException(Reason.CORRUPT_PAYLOAD, "محتوى النسخة غير مقروء: ${e.message?.take(80)}")
         }
-        if (payload.snapshot.fingerprint() != payload.fingerprint && header.dataVersion == DATA_VERSION)
-            throw BackupException(Reason.INVALID_DATA, "بصمة المحتوى لا تطابق")
-        val problems = SnapshotValidator.validate(payload.snapshot)
+        val snap = decoded.snapshot.canonical()
+        val currentFp = snap.fingerprint()
+        if (header.dataVersion == DATA_VERSION && currentFp != claimed) throw BackupException(Reason.INVALID_DATA, "بصمة المحتوى لا تطابق")
+        val problems = SnapshotValidator.validate(snap)
         if (problems.isNotEmpty()) throw BackupException(Reason.INVALID_DATA, "بيانات غير متّسقة: " + problems.take(3).joinToString("؛ "))
-        return Opened(header, payload)
+        return Opened(header, Payload(currentFp, snap.counts(), snap), header.dataVersion, claimed)
     }
+
+    private fun sha256(s: String) = java.security.MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
     internal fun deriveKey(ikm: ByteArray, salt: ByteArray): ByteArray {
         // HKDF-SHA256 (RFC 5869): extract ثم expand لكتلة واحدة 32 بايت
@@ -166,12 +205,17 @@ object BackupMigrations {
             val newSnap = JsonObject(snap + mapOf("txns" to JsonArray(txns), "members" to JsonArray(emptyList()), "budgets" to JsonArray(emptyList()), "recurring" to JsonArray(emptyList())))
             JsonObject(o + ("snapshot" to newSnap))
         },
-        // 2 → 3: جدول الحسابات (الأشخاص) يُشتق من أسماء الديون، بمعرّفات ثابتة من الاسم.
+        // 2 → 3: جدول الحسابات (الأشخاص) يُشتق من أسماء الديون، بمعرّفات ثابتة من الاسم،
+        // وتُوحَّد أسماء الديون على الصيغة المقصوصة نفسها — مطابق لـ MIGRATION_2_3 في Room.
         2 to { o ->
             val snap = o["snapshot"]!!.jsonObject
-            val names = snap["debts"]!!.jsonArray.map { it.jsonObject["party"]!!.jsonPrimitive.content.trim() }.distinct()
+            val debts = snap["debts"]!!.jsonArray.map { d ->
+                val n = PartyIds.normalize(d.jsonObject["party"]!!.jsonPrimitive.content)
+                JsonObject(d.jsonObject + ("party" to JsonPrimitive(n)))
+            }
+            val names = debts.map { it["party"]!!.jsonPrimitive.content }.filter { it.isNotEmpty() }.distinct()
             val parties = names.map { n -> buildJsonObject { put("id", PartyIds.forName(n)); put("name", n); put("phone", ""); put("note", ""); put("archived", false); put("createdAtUtc", 0L) } }
-            JsonObject(o + ("snapshot" to JsonObject(snap + ("parties" to JsonArray(parties)))))
+            JsonObject(o + ("snapshot" to JsonObject(snap + mapOf("debts" to JsonArray(debts), "parties" to JsonArray(parties)))))
         },
     )
 
@@ -189,5 +233,7 @@ object BackupMigrations {
 
 /** معرّف ثابت لحساب الشخص مشتق من اسمه (للترحيل: النتيجة نفسها في كل مرة). */
 object PartyIds {
-    fun forName(name: String): String = "party-" + java.util.UUID.nameUUIDFromBytes(name.trim().toByteArray(Charsets.UTF_8)).toString()
+    /** التطبيع الوحيد لأسماء الأشخاص في كل المسارات (الواجهة، ترحيل Room، ترحيل النسخ). */
+    fun normalize(name: String): String = name.trim()
+    fun forName(name: String): String = "party-" + java.util.UUID.nameUUIDFromBytes(normalize(name).toByteArray(Charsets.UTF_8)).toString()
 }

@@ -66,6 +66,8 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
+    // عينات النسخ التاريخية (fixtures) مشتركة مع اختبارات core
+    sourceSets["test"].resources.srcDir("../core/src/test/resources")
     testOptions {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {

@@ -81,12 +81,16 @@ val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `parties` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `phone` TEXT NOT NULL, `note` TEXT NOT NULL, `archived` INTEGER NOT NULL, `createdAtUtc` INTEGER NOT NULL, PRIMARY KEY(`id`))")
         db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_parties_name` ON `parties` (`name`)")
-        val names = mutableListOf<String>()
-        db.query("SELECT DISTINCT TRIM(party) FROM debts").use { c -> while (c.moveToNext()) c.getString(0)?.takeIf { it.isNotBlank() }?.let(names::add) }
-        names.distinct().forEach { n ->
+        // التطبيع بـ Kotlin (PartyIds.normalize) لا بـ TRIM في SQLite الذي يقصّ المسافة فقط:
+        // النتيجة مطابقة حرفياً لترحيل النسخ الاحتياطية v2 → v3.
+        val rows = mutableListOf<Pair<String, String>>()
+        db.query("SELECT id, party FROM debts").use { c -> while (c.moveToNext()) rows += c.getString(0) to (c.getString(1) ?: "") }
+        rows.forEach { (id, raw) ->
+            val n = app.rasidi.core.backup.PartyIds.normalize(raw)
+            if (n != raw) db.execSQL("UPDATE debts SET party = ? WHERE id = ?", arrayOf<Any>(n, id))
+        }
+        rows.map { app.rasidi.core.backup.PartyIds.normalize(it.second) }.filter { it.isNotEmpty() }.distinct().forEach { n ->
             db.execSQL("INSERT OR IGNORE INTO parties (id, name, phone, note, archived, createdAtUtc) VALUES (?, ?, '', '', 0, 0)", arrayOf<Any>(app.rasidi.core.backup.PartyIds.forName(n), n))
         }
-        // توحيد الأسماء المخزّنة في الديون على الصيغة المقصوصة نفسها
-        db.execSQL("UPDATE debts SET party = TRIM(party)")
     }
 }

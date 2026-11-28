@@ -457,7 +457,10 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
 
     // ---------------- الاستعادة ----------------
     /** يستبدل الدفتر كاملاً بلقطة في معاملة واحدة: إما السجل السابق كاملاً أو الجديد كاملاً. */
-    suspend fun replaceAll(s: Snapshot) = write {
+    /** استبدال كامل (للعرض والاختبارات). الاستعادة تستخدم [replaceIfUnchanged]. */
+    suspend fun replaceAll(s: Snapshot) = write { clearAndInsert(s) }
+
+    private suspend fun clearAndInsert(s: Snapshot) {
         dao.clearRecurring(); dao.clearBudgets()
         dao.clearZakatPayments(); dao.clearZakatEstimates(); dao.clearInventoryLines(); dao.clearInventories()
         dao.clearDebtPayments(); dao.clearInstallments(); dao.clearGoldMoves(); dao.clearEntries(); dao.clearTxns()
@@ -471,4 +474,33 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         dao.insertBudgets(s.budgets); dao.insertRecurring(s.recurring)
         db.jobs().clear()
     }
+
+    sealed interface ReplaceOutcome {
+        data class Replaced(val fingerprint: String, val previous: Snapshot) : ReplaceOutcome
+        data object Stale : ReplaceOutcome
+    }
+
+    /** بصمة الاستبدال لا تطابق؛ تُرمى داخل المعاملة فيُلغى كل شيء. */
+    class ReplaceVerificationException(message: String) : Exception(message)
+
+    /**
+     * بروتوكول الاستعادة في معاملة واحدة (لا كتابة أخرى تتداخل معه):
+     * 1) قراءة السجل الحالي ومقارنة بصمته بـ[expectedCurrentFp] — إن تغيّر يُعاد [ReplaceOutcome.Stale] بلا أي كتابة؛
+     * 2) [beforeReplace] على اللقطة نفسها (نسخة الأمان) — أي خطأ فيه يلغي العملية؛
+     * 3) المسح والإدراج؛ 4) إعادة القراءة ومطابقة [expectedNewFp] — عدم التطابق يُرجع كل شيء.
+     */
+    suspend fun replaceIfUnchanged(expectedCurrentFp: String, newSnap: Snapshot, expectedNewFp: String, beforeReplace: suspend (Snapshot) -> Unit): ReplaceOutcome {
+        val r = db.withTransaction {
+            val cur = snapshot()
+            if (cur.fingerprint() != expectedCurrentFp) return@withTransaction ReplaceOutcome.Stale
+            beforeReplace(cur)
+            clearAndInsert(newSnap)
+            val fp = snapshot().fingerprint()
+            if (fp != expectedNewFp) throw ReplaceVerificationException("بصمة السجل بعد الاستعادة لا تطابق النسخة؛ أُلغيت الاستعادة ولم يتغيّر شيء")
+            ReplaceOutcome.Replaced(fp, cur)
+        }
+        if (r is ReplaceOutcome.Replaced) { _version.value = _version.value + 1; onWrite() }
+        return r
+    }
 }
+

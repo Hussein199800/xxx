@@ -11,9 +11,16 @@ import java.io.File
 /**
  * إنشاء ملف .rasidi ومعاينته واستعادته.
  * الاستعادة: فحص كامل (الحجم، الترويسة، الإصدار، سلامة التشفير، العلاقات، البصمة) قبل أي كتابة،
- * ثم نسخة أمان محلية للسجل الحالي إن لم يكن فارغاً، ثم استبدال في معاملة واحدة، ثم التحقق من التساوي.
+ * ثم — في معاملة واحدة لا تتداخل معها كتابة — مقارنة السجل بالمعاينة، ونسخة أمان مُتحقَّق منها
+ * إن لم يكن السجل فارغاً فعلاً، والاستبدال، ومطابقة البصمة؛ أي فشل يُرجع السجل السابق كاملاً.
  */
-class BackupService(private val ctx: Context, private val repo: LedgerRepository, private val installId: () -> String, private val clock: () -> Long = System::currentTimeMillis) {
+class BackupService(
+    private val ctx: Context,
+    private val repo: LedgerRepository,
+    private val installId: () -> String,
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val safetyRoot: () -> File = { File(ctx.filesDir, "safety") },
+) {
 
     data class Created(val header: BackupFormat.Header, val bytes: ByteArray, val fingerprint: String, val counts: Map<String, Int>)
 
@@ -23,52 +30,65 @@ class BackupService(private val ctx: Context, private val repo: LedgerRepository
         return Created(h, bytes, snap.fingerprint(), snap.counts())
     }
 
-    data class Preview(
-        val opened: BackupFormat.Opened,
-        val currentCounts: Map<String, Int>,
-        val currentFingerprint: String,
-        val currentEmpty: Boolean,
-    ) {
+    data class Preview(val opened: BackupFormat.Opened, val currentCounts: Map<String, Int>, val currentFingerprint: String, val currentEmpty: Boolean) {
         val backupCounts get() = opened.payload.counts
         val sameAsCurrent get() = opened.payload.fingerprint == currentFingerprint
     }
 
-    /** يفك ويتحقق ويقارن بالسجل الحالي. لا يكتب شيئاً. */
     suspend fun preview(bytes: ByteArray, code: RecoveryCode): Preview {
         val opened = BackupFormat.decrypt(bytes, code)
         val cur = repo.snapshot()
-        return Preview(opened, cur.counts(), cur.fingerprint(), cur.accounts.isEmpty() && cur.txns.isEmpty())
+        return Preview(opened, cur.counts(), cur.fingerprint(), cur.isEffectivelyEmpty())
     }
 
     sealed interface RestoreResult {
         data class Done(val safetyFile: File?, val fingerprint: String) : RestoreResult
-        /** تغيّر السجل بعد المعاينة: حدّث المعاينة قبل التأكيد. */
         data object Stale : RestoreResult
     }
 
-    /**
-     * ينفذ الاستعادة. [safetyCode] لتشفير نسخة الأمان (رمز هذا الجهاز). يتحقق أن السجل لم يتغير منذ المعاينة.
-     */
+    class SafetyRequired : IllegalStateException("يلزم رمز استعادة لهذا الجهاز لإنشاء نسخة الأمان قبل الاستبدال")
+
     suspend fun restore(preview: Preview, safetyCode: RecoveryCode?): RestoreResult {
-        val cur = repo.snapshot()
-        if (cur.fingerprint() != preview.currentFingerprint) return RestoreResult.Stale
+        val target = preview.opened.payload.snapshot
+        val expected = preview.opened.payload.fingerprint
         var safety: File? = null
-        if (!preview.currentEmpty) {
-            val code = safetyCode ?: throw IllegalStateException("يلزم رمز استعادة لهذا الجهاز لإنشاء نسخة الأمان قبل الاستبدال")
-            val (_, bytes) = BackupFormat.encrypt(cur, code, installId(), "SAFETY", clock(), BuildConfig.VERSION_NAME)
-            safety = File(safetyDir(), "safety-${clock()}.rasidi").apply { writeBytes(bytes) }
-            // تحقق أن نسخة الأمان تُفتح قبل الاستبدال
-            BackupFormat.decrypt(safety.readBytes(), code)
+        val outcome = try {
+            repo.replaceIfUnchanged(preview.currentFingerprint, target, expected) { cur ->
+                if (!cur.isEffectivelyEmpty()) {
+                    val code = safetyCode ?: throw SafetyRequired()
+                    safety = writeSafety(cur, code)
+                }
+            }
+        } catch (e: Exception) {
+            // فشلت الاستعادة ورجع السجل؛ نسخة أمان كُتبت لسجل لم يُستبدل لا حاجة لها
+            safety?.delete()
+            throw e
         }
-        repo.replaceAll(preview.opened.payload.snapshot)
-        val after = repo.snapshot()
-        val fp = after.fingerprint()
-        check(fp == preview.opened.payload.fingerprint) { "بصمة السجل بعد الاستعادة لا تطابق النسخة" }
-        return RestoreResult.Done(safety, fp)
+        return when (outcome) {
+            LedgerRepository.ReplaceOutcome.Stale -> RestoreResult.Stale
+            is LedgerRepository.ReplaceOutcome.Replaced -> RestoreResult.Done(safety, outcome.fingerprint)
+        }
     }
 
-    fun safetyDir() = File(ctx.filesDir, "safety").apply { mkdirs() }
-    fun safetyFiles(): List<File> = safetyDir().listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
+    /** كتابة ذرّية: ملف مؤقت + مزامنة + إعادة تسمية، ثم فكّه والتحقق من بصمته قبل المتابعة. */
+    private fun writeSafety(cur: Snapshot, code: RecoveryCode): File {
+        val (_, bytes) = BackupFormat.encrypt(cur, code, installId(), "SAFETY", clock(), BuildConfig.VERSION_NAME)
+        val dir = safetyDir()
+        if (!dir.isDirectory) throw java.io.IOException("تعذّر إنشاء مجلد نسخ الأمان")
+        val name = "safety-${clock()}-${java.util.UUID.randomUUID().toString().take(8)}.rasidi"
+        val tmp = File(dir, "$name.tmp")
+        try {
+            java.io.FileOutputStream(tmp).use { it.write(bytes); it.fd.sync() }
+            val dest = File(dir, name)
+            if (!tmp.renameTo(dest)) throw java.io.IOException("تعذّر حفظ نسخة الأمان")
+            val check = BackupFormat.decrypt(dest.readBytes(), code)
+            if (check.payload.fingerprint != cur.canonical().fingerprint()) { dest.delete(); throw java.io.IOException("نسخة الأمان لا تطابق السجل الحالي") }
+            return dest
+        } finally { tmp.delete() }
+    }
+
+    fun safetyDir() = safetyRoot().apply { mkdirs() }
+    fun safetyFiles(): List<File> = safetyDir().listFiles()?.filter { it.name.endsWith(".rasidi") }?.sortedByDescending { it.lastModified() } ?: emptyList()
 
     fun fileName(kind: String) = "rasidi-${kind.lowercase()}-${java.time.LocalDateTime.now().toString().take(16).replace(':', '-')}.rasidi"
 }

@@ -62,7 +62,21 @@ data class Snapshot(
     /** أرصدة كل حساب بالوحدات الصغرى، لمقارنة التساوي بعد الاستعادة. */
     fun balances(): Map<String, Long> = entries.groupBy { it.accountId }.mapValues { (_, l) -> l.sumOf { it.amountMinor } }
 
+    /**
+     * سجل «فارغ فعلاً» يُستبدل دون نسخة أمان: لا أي سجل للمستخدم. التصنيفات مسموحة فقط إن طابقت
+     * الافتراضية حرفياً، والإعدادات فقط إن كانت مظهرية بلا بيانات شخصية.
+     */
+    fun isEffectivelyEmpty(defaultCategories: List<CategoryEntity> = app.rasidi.core.demo.DemoData.defaultCategories): Boolean {
+        val userTables = counts() - "categories" - "settings"
+        if (userTables.values.any { it > 0 }) return false
+        if (categories.isNotEmpty() && categories.sortedBy { it.id } != defaultCategories.sortedBy { it.id }) return false
+        return settings.all { it.key in COSMETIC_SETTING_KEYS }
+    }
+
     companion object {
+        /** إعدادات لا تحمل بيانات للمستخدم؛ وجودها وحدها لا يجعل السجل غير فارغ. */
+        val COSMETIC_SETTING_KEYS = setOf("ledger.timezone", "ui.theme", "ui.fontScale", "ui.hideAmounts")
+
         /** مفاتيح الإعدادات المسموح نسخها (لا رموز وصول ولا ربط حساب). */
         val BACKUP_SETTING_KEYS = setOf(
             "ledger.timezone", "ui.theme", "ui.fontScale", "ui.hideAmounts", "default.account", "default.expenseCategory",
