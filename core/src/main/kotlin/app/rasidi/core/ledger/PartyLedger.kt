@@ -47,12 +47,13 @@ object PartyLedger {
     }
 
     /** كل الحسابات: من جدول الحسابات (ولو برصيد صفر) ومن أسماء الديون. */
-    fun parties(v: LedgerView, includeArchived: Boolean = false): List<PartySummary> {
+    /** [asOf]: الأرصدة كما في نهاية ذلك اليوم (null = كل الحركات). */
+    fun parties(v: LedgerView, includeArchived: Boolean = false, asOf: LocalDate? = null): List<PartySummary> {
         val table = v.s.parties.filter { includeArchived || !it.archived }.associateBy { it.name.trim() }
         val archived = v.s.parties.filter { it.archived }.map { it.name.trim() }.toSet()
         val names = (table.keys + v.debts.map { it.party.trim() }).distinct().filter { includeArchived || it !in archived }
         return names.map { p ->
-            val ms = moves(v, p)
+            val ms = moves(v, p).filter { asOf == null || !it.date.isAfter(asOf) }
             val e = table[p]
             PartySummary(p, ms.groupBy { it.signed.currency.code }.mapValues { (c, l) -> l.fold(Money.zero(Currencies.of(c))) { a, m -> a + m.signed } },
                 ms.maxOfOrNull { it.date }, e?.phone.orEmpty(), e?.note.orEmpty(), e?.id)
@@ -67,6 +68,15 @@ object PartyLedger {
             if (m.minor < 0) cred[c] = (cred[c] ?: Money.zero(m.currency)) + (-m)
         } }
         return deb to cred
+    }
+
+    /**
+     * حدود «الكل» المشتركة بين العرض والتصدير: من أول حركة إلى آخر حركة بهذه العملة، **شاملة المؤرخة مستقبلاً**
+     * (السياسة: «الكل» لا يُسقط شيئاً). بلا حركات ⇒ اليوم فقط.
+     */
+    fun allRange(v: LedgerView, party: String, currency: String, today: LocalDate): Pair<LocalDate, LocalDate> {
+        val ds = moves(v, party).filter { it.signed.currency.code == currency }.map { it.date }
+        return (ds.minOrNull() ?: today) to (ds.maxOrNull() ?: today)
     }
 
     fun currencies(v: LedgerView, party: String) = moves(v, party).map { it.signed.currency.code }.distinct()

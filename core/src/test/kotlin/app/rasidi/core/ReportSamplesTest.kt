@@ -55,6 +55,15 @@ class ReportSamplesTest {
         assertTrue(String(pdf, Charsets.ISO_8859_1).contains("/ToUnicode"))
     }
 
+    /** F06: تقرير جميع الحسابات متعدد الصفحات بكل صيغه (بيانات اصطناعية). */
+    @Test fun accountsReportSamples() {
+        val big = AccountsReportTest.bigView()
+        val dir = File(outDir, "accounts")
+        writeAll(AccountsReport.build(big, AccountsReport.Scope.ALL, AccountsReport.Options(today, showPhone = true), gen), dir)
+        writeAll(AccountsReport.build(big, AccountsReport.Scope.DEBTOR, AccountsReport.Options(today), gen), dir)
+        writeAll(AccountsReport.build(big, AccountsReport.Scope.CREDITOR, AccountsReport.Options(today, sort = AccountsReport.Sort.BALANCE), gen), dir)
+    }
+
     @Test fun otherReportSamples() {
         val extra = File(outDir, "extra")
         writeAll(ReportBuilders.accountStatement(view, "acc-try", LocalDate.of(2026, 11, 1), LocalDate.of(2026, 11, 30), gen), extra)

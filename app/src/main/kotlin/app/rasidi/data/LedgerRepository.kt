@@ -127,7 +127,108 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         id
     }!!
 
-    suspend fun updateAccount(a: AccountEntity) = write { dao.updateAccount(a); audit("account", a.id, "update", a.name) }
+    /**
+     * F01: تعديل الصندوق. الاسم مطلوب ولا يتكرر مع صندوق آخر بالعملة نفسها؛ العملة تتغير فقط لصندوق بلا أي قيود أو روابط؛
+     * إلغاء «السماح بالسالب» يُرفض إن كان رصيده سالباً في أي يوم؛ الأرشفة لصندوق رصيده صفر فقط. سجل تعديل بالقيم السابقة.
+     */
+    suspend fun editAccount(id: String, name: String, type: AccountType, currency: CurrencyDef, allowNegative: Boolean, archived: Boolean, requestId: String): String =
+        once(requestId, "editAccount", p(id, name.trim(), type, currency.code, allowNegative, archived)) {
+            val old = dao.accounts().firstOrNull { it.id == id } ?: throw LedgerException("الحساب غير موجود")
+            val n = name.trim()
+            if (n.isBlank()) throw LedgerException("اسم الصندوق مطلوب")
+            if (n.length > 200) throw LedgerException("الاسم طويل جداً")
+            if (dao.accounts().any { it.id != id && it.name == n && it.currency == currency.code }) throw LedgerException("يوجد صندوق بالاسم «$n» والعملة نفسها")
+            val es = dao.entries().filter { it.accountId == id }
+            if (currency.code != old.currency) {
+                val referenced = es.isNotEmpty() || dao.recurring().any { it.accountId == id } || dao.debtPayments().any { it.accountId == id } || dao.zakatPayments().any { it.accountId == id }
+                if (referenced) throw LedgerException("لا تتغير عملة صندوق عليه قيود؛ أنشئ صندوقاً جديداً وحوّل إليه")
+            }
+            if (!allowNegative && old.allowNegative) {
+                val dates = es.map { it.date }.toSortedSet()
+                var run = java.math.BigInteger.ZERO
+                val sorted = es.sortedBy { it.date }
+                var i = 0
+                for (d in dates) { while (i < sorted.size && sorted[i].date <= d) { run += java.math.BigInteger.valueOf(sorted[i].amountMinor); i++ }; if (run.signum() < 0) throw LedgerException("رصيد الصندوق كان سالباً بتاريخ \u2066$d\u2069؛ لا يمكن إلغاء «السماح بالسالب»") }
+            }
+            if (archived && !old.archived && es.sumOf { it.amountMinor } != 0L) throw LedgerException("رصيد الصندوق ليس صفراً؛ حوّل رصيده أولاً ثم أرشفه")
+            val upd = old.copy(name = n, type = type.name, currency = currency.code, allowNegative = allowNegative, archived = archived)
+            if (upd != old) {
+                dao.updateAccount(upd)
+                audit("account", id, "edit", listOfNotNull(
+                    "name".takeIf { old.name != n }, "type=${old.type}→${type.name}".takeIf { old.type != type.name },
+                    "currency=${old.currency}→${currency.code}".takeIf { old.currency != currency.code },
+                    "allowNegative=${old.allowNegative}→$allowNegative".takeIf { old.allowNegative != allowNegative },
+                    "archived=${old.archived}→$archived".takeIf { old.archived != archived }).joinToString("; "))
+            }
+            id
+        }!!
+
+    /** للتوافق: تعديل حقل واحد عبر [editAccount] بقواعده نفسها. */
+    suspend fun updateAccount(a: AccountEntity) = editAccount(a.id, a.name, AccountType.valueOf(a.type), Currencies.of(a.currency), a.allowNegative, a.archived, uuid())
+
+    /** الافتتاحي الفعّال للصندوق: حركات OPENING غير معكوسة لها قيد عليه. */
+    data class OpeningInfo(val txnIds: List<String>, val amountMinor: Long, val date: LocalDate?, val affectsFinalInventory: Boolean)
+
+    suspend fun openingInfo(accountId: String, newDate: LocalDate? = null): OpeningInfo {
+        val txns = dao.txns().filter { it.type == TxnType.OPENING.name && it.reversedById == null }.associateBy { it.id }
+        val es = dao.entries().filter { it.accountId == accountId && it.txnId in txns }
+        val date = es.minOfOrNull { it.date }?.let(LocalDate::parse)
+        val from = listOfNotNull(date, newDate).minOrNull()
+        val inv = from != null && dao.inventories().any { it.status == "FINAL" && !LocalDate.parse(it.date).isBefore(from) }
+        return OpeningInfo(es.map { it.txnId }.distinct(), es.sumOf { it.amountMinor }, date, inv)
+    }
+
+    /**
+     * F02: تصحيح الرصيد الافتتاحي (غير «العدّ اليدوي»). يُعكس الافتتاحي الفعّال (يبقى في السجل) ويُنشأ افتتاحي جديد
+     * مرتبط به بالسبب، في معاملة واحدة مع تدقيق. الجرد المعتمد لا يتغير (لقطاته محفوظة)؛ الواجهة تنبّه بذلك.
+     * [newMinor] = 0 يلغي الافتتاحي فقط. مسار الرصيد كاملاً يُفحص.
+     */
+    suspend fun correctOpening(accountId: String, newMinor: Long, newDate: LocalDate, reason: String, requestId: String): String? =
+        once(requestId, "correctOpening", p(accountId, newMinor, newDate, reason.trim())) {
+            if (reason.isBlank()) throw LedgerException("سبب التصحيح مطلوب")
+            val acc = account(accountId)
+            if (newMinor < 0 && !acc.allowNegative) throw LedgerException("افتتاحي سالب يتطلب «السماح بالسالب» لهذا الصندوق")
+            if (kotlin.math.abs(newMinor) > MoneyPolicy.MAX_MINOR) throw LedgerException("المبلغ أكبر من الحد المسموح")
+            val info = openingInfo(accountId)
+            if (info.txnIds.size > 1) throw LedgerException("للصندوق أكثر من قيد افتتاحي فعّال؛ صحّحها من تفاصيل كل حركة")
+            val oldTxn = info.txnIds.firstOrNull()?.let { dao.txn(it) }
+            if (oldTxn != null && dao.entriesOf(oldTxn.id).any { it.accountId != accountId }) throw LedgerException("القيد الافتتاحي مشترك مع صندوق آخر")
+            if (info.amountMinor == newMinor && (newMinor == 0L || info.date == newDate)) return@once null
+            val oldEntries = oldTxn?.let { dao.entriesOf(it.id).map { e -> e.id } }?.toSet() ?: emptySet()
+            guardPath(acc, oldEntries, if (newMinor != 0L) listOf(newDate to newMinor) else emptyList())
+            val rev = oldTxn?.let { reverseTx(it.id, "تصحيح الافتتاحي: ${reason.trim()}", "$requestId:rev", guardBalances = false) /* المسار المجمّع فُحص أعلاه */ }
+            var t: String? = null
+            if (newMinor != 0L) {
+                t = uuid()
+                dao.insertTxn(TxnEntity(t, TxnType.OPENING.name, newDate.toString(), "رصيد افتتاحي (مصحّح): ${reason.trim()}".take(300), "", "$requestId:new", createdAtUtc = clock(), updatedAtUtc = clock()))
+                dao.insertEntries(listOf(EntryEntity(uuid(), t, acc.id, EntryKind.OPENING.name, newMinor, acc.currency.code, newDate.toString())))
+            }
+            audit("account", accountId, "openingCorrection", "old=${info.amountMinor}@${info.date} new=$newMinor@$newDate oldTxn=${oldTxn?.id} reversal=$rev newTxn=$t" + if (info.affectsFinalInventory) "; يمسّ جرداً معتمداً (لقطته محفوظة)" else "")
+            t ?: rev
+        }
+
+    /**
+     * F03: تصحيح «رصيد سابق» لحساب شخص — فقط لدين مسجّل دون حركة نقدية (لا تُنشأ حركة صندوق).
+     * الأصل الجديد موجب ولا يقل عن صافي المسدَّد، ولا يُعدَّل دين له أقساط أو ملغى. التعديل في مكانه مع تدقيق بالقيمة السابقة.
+     * تبديل الاتجاه أو العملة: إلغاء الدين (عكس حركة إنشائه بعد عكس دفعاته) ثم رصيد سابق جديد.
+     */
+    suspend fun correctDebtPrincipal(debtId: String, newMinor: Long, reason: String, requestId: String): String =
+        once(requestId, "correctDebtPrincipal", p(debtId, newMinor, reason.trim())) {
+            if (reason.isBlank()) throw LedgerException("سبب التصحيح مطلوب")
+            checkAmount(newMinor, "الرصيد السابق")
+            val d = dao.debts().firstOrNull { it.id == debtId } ?: throw LedgerException("الدين غير موجود")
+            if (d.txnId != null) throw LedgerException("هذا قرض بحركة نقدية؛ صحّحه بعكس الحركة ثم إدخاله من جديد")
+            if (debtId in cancelledDebts()) throw LedgerException("الدين ملغى")
+            if (dao.installments().any { it.debtId == debtId }) throw LedgerException("للدين جدول أقساط؛ ألغِه وأنشئه من جديد")
+            val paid = dao.debtPayments().filter { it.debtId == debtId }.sumOf { it.debtAmountMinor }
+            if (newMinor < paid) throw LedgerException("المسدَّد منه ${Fmt.money(Money(paid, Currencies.of(d.currency)), false)}؛ لا يقل الأصل عن ذلك")
+            if (newMinor != d.principalMinor) {
+                dao.updateDebt(d.copy(principalMinor = newMinor))
+                audit("debt", debtId, "principalCorrection", "old=${d.principalMinor} new=$newMinor")
+            }
+            debtId
+        }!!
+
 
     suspend fun addCategory(name: String, kind: String): String = write {
         val id = uuid(); dao.insertCategory(CategoryEntity(id, name.trim(), kind, sort = 100)); id
@@ -401,6 +502,13 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
     suspend fun reverse(txnId: String, reason: String, requestId: String): String {
         return once(requestId, "reverse", p(txnId, reason.trim())) {
             existing(requestId)?.let { return@once it }
+            reverseTx(txnId, reason, requestId)
+        }!!
+    }
+
+    /** جسم العكس — داخل معاملة قائمة فقط. */
+    private suspend fun reverseTx(txnId: String, reason: String, requestId: String, guardBalances: Boolean = true): String {
+        run {
             val t = dao.txn(txnId) ?: throw LedgerException("الحركة غير موجودة")
             if (t.reversedById != null) throw LedgerException("الحركة معكوسة مسبقاً")
             if (t.reversesId != null) throw LedgerException("لا يمكن عكس حركة عكس")
@@ -410,7 +518,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
                 if (net != 0L) throw LedgerException("على هذا الدين دفعات مسجّلة؛ اعكس الدفعات أولاً ثم ألغِ الدين")
             }
             val es0 = dao.entriesOf(t.id)
-            es0.groupBy { it.accountId }.forEach { (accId, l) -> guardPath(account(accId), emptySet(), l.map { LocalDate.parse(it.date) to -it.amountMinor }) }
+            if (guardBalances) es0.groupBy { it.accountId }.forEach { (accId, l) -> guardPath(account(accId), emptySet(), l.map { LocalDate.parse(it.date) to -it.amountMinor }) }
             dao.goldMovesOfTxn(t.id).groupBy { it.holdingId }.forEach { (h, l) -> guardGold(h, emptySet(), l.map { LocalDate.parse(it.date) to BigDecimal(it.grams).negate() }) }
             val r = uuid()
             dao.insertTxn(TxnEntity(r, TxnType.REVERSAL.name, t.date, // بتاريخ الأصل حتى تتعادل تقارير الفترة
@@ -420,9 +528,9 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
             dao.goldMovesOfTxn(t.id).forEach { m -> dao.insertGoldMove(m.copy(id = uuid(), txnId = r, type = GoldMoveType.ADJUST.name, grams = BigDecimal(m.grams).negate().toPlainString())) }
             dao.zakatPaymentsOfTxn(t.id).forEach { z -> dao.insertZakatPayment(z.copy(id = uuid(), txnId = r, amountMinor = -z.amountMinor, usd = BigDecimal(z.usd).negate().toPlainString())) }
             dao.updateTxn(t.copy(reversedById = r, updatedAtUtc = clock()))
-            audit("txn", t.id, "reverse", "by=$r ${if (t.debtId != null) "debt=${t.debtId}" else ""} $reason")
-            r
-        }!!
+            audit("txn", t.id, "reverse", "by=$r ${if (t.debtId != null) "debt=${t.debtId}" else ""}")
+            return r
+        }
     }
 
     /**

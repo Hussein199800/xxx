@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -78,5 +79,15 @@ fun ExportPanel(vm: MainViewModel, doc0: ReportDoc?, showPrivacy: Boolean = true
                 }
             })
         }
+        // طباعة التقرير كاملاً (كل الصفحات) من PDF عبر Android Print بمقاس A4 — لا من العناصر المرئية
+        if (doc.kind == app.rasidi.core.reports.ReportDoc.Kind.REPORT) SoftButton("طباعة (A4)", enabled = !busy, icon = Icons.Filled.Print, modifier = Modifier.fillMaxWidth().padding(top = Sp.xs), onClick = {
+            busy = true
+            scope.launch {
+                try {
+                    val pdf = withContext(Dispatchers.Default) { ExportService.render(doc, ExportFormat.PDF) }
+                    app.rasidi.reports.PrintService.print(ctx, doc.fileBase, pdf, android.print.PrintAttributes.MediaSize.ISO_A4)
+                } catch (e: Exception) { vm.message("تعذّرت الطباعة: ${e.message}") } finally { busy = false }
+            }
+        })
     }
 }

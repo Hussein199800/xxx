@@ -5,6 +5,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -95,6 +97,7 @@ fun AccountDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
     var from by remember { mutableStateOf(today.withDayOfMonth(1)) }
     var to by remember { mutableStateOf(today.withDayOfMonth(today.lengthOfMonth())) }
     var count by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }; var opening by remember { mutableStateOf(false) }
     val counted = remember { AmountState() }
     var export by remember { mutableStateOf(false) }
     var hideNames by remember { mutableStateOf(false) }; var hideNotes by remember { mutableStateOf(false) }
@@ -147,9 +150,71 @@ fun AccountDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
         }
         val e = view.s.accounts.first { it.id == id }
         Spacer(Modifier.height(Sp.sm))
-        Row(verticalAlignment = Alignment.CenterVertically) { Switch(e.allowNegative, { vm.launchSafe { vm.repo.updateAccount(e.copy(allowNegative = it)) } }); Spacer(Modifier.width(8.dp)); Text("يسمح بالرصيد السالب") }
-        TextButton(onClick = { vm.launchSafe(if (e.archived) "أُعيد الحساب" else "أُرشف الحساب مع حفظ سجله") { vm.repo.updateAccount(e.copy(archived = !e.archived)) } }) { Text(if (e.archived) "إلغاء الأرشفة" else "أرشفة الحساب") }
+        Row(horizontalArrangement = Arrangement.spacedBy(Sp.xs)) {
+            SoftButton("تعديل الصندوق", { editing = true }, Modifier.weight(1f), icon = Icons.Filled.Edit)
+            SoftButton("تصحيح الرصيد الافتتاحي", { opening = true }, Modifier.weight(1f), icon = Icons.Filled.Restore)
+        }
+        if (editing) EditWalletDialog(vm, e) { editing = false }
+        if (opening) OpeningCorrectionDialog(vm, a) { opening = false }
     }
+}
+
+/** F01: تعديل الاسم والنوع والعملة (للصندوق الفارغ فقط) والسماح بالسالب والأرشفة — بقواعد المستودع نفسها. */
+@Composable
+private fun EditWalletDialog(vm: MainViewModel, e: app.rasidi.core.data.AccountEntity, onDone: () -> Unit) {
+    val c = LocalR.current
+    var name by remember { mutableStateOf(e.name) }
+    var type by remember { mutableStateOf(AccountType.valueOf(e.type)) }
+    var cur by remember { mutableStateOf(e.currency) }
+    var neg by remember { mutableStateOf(e.allowNegative) }
+    var archived by remember { mutableStateOf(e.archived) }
+    var busy by remember { mutableStateOf(false) }
+    val rid = rememberSaveable { vm.newRequestId() }
+    AlertDialog(onDismissRequest = onDone, title = { Text("تعديل الصندوق") }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState())) {
+            TextIn(name, { name = it }, "الاسم")
+            ChipRow(AccountType.values().toList(), type, { it.ar }, { type = it })
+            ChipRow(listOf("USD", "TRY", "SYP", "EUR", "SYP_OLD"), cur, { Currencies.of(it).nameAr }, { cur = it })
+            Text("العملة تتغير فقط لصندوق بلا قيود؛ وإلا أنشئ صندوقاً جديداً وحوّل إليه.", color = c.mute, style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically) { Switch(neg, { neg = it }); Spacer(Modifier.width(8.dp)); Text("يسمح بالرصيد السالب") }
+            Row(verticalAlignment = Alignment.CenterVertically) { Switch(archived, { archived = it }); Spacer(Modifier.width(8.dp)); Text("مؤرشف (رصيده صفر، ويبقى سجله)") }
+        }
+    }, confirmButton = {
+        TextButton(enabled = !busy && name.isNotBlank(), onClick = {
+            busy = true
+            vm.launchSafe("حُفظ الصندوق") { vm.repo.editAccount(e.id, name, type, Currencies.of(cur), neg, archived, rid); onDone() }.invokeOnCompletion { busy = false }
+        }) { Text("حفظ") }
+    }, dismissButton = { TextButton(onClick = onDone) { Text("إلغاء", color = c.mute) } })
+}
+
+/** F02: تصحيح الافتتاحي — معاينة ثم عكس الأصل وإنشاء افتتاحي جديد بسبب، مختلف عن «عدّ يدوي» بتاريخ اليوم. */
+@Composable
+private fun OpeningCorrectionDialog(vm: MainViewModel, a: Account, onDone: () -> Unit) {
+    val c = LocalR.current
+    val amount = remember { AmountState() }
+    var date by remember { mutableStateOf(vm.today()) }
+    var reason by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var info by remember { mutableStateOf<app.rasidi.data.LedgerRepository.OpeningInfo?>(null) }
+    val rid = rememberSaveable { vm.newRequestId() }
+    LaunchedEffect(date) { info = vm.repo.openingInfo(a.id, date).also { i -> if (amount.text.isBlank() && i.amountMinor != 0L) { amount.text = Money(i.amountMinor, a.currency).amount.toPlainString() }; if (i.date != null && date == vm.today() && i.txnIds.isNotEmpty()) date = i.date } }
+    val m = amount.parse(a.currency)
+    AlertDialog(onDismissRequest = onDone, title = { Text("تصحيح الرصيد الافتتاحي") }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState())) {
+            val i = info
+            Text(if (i == null) "…" else if (i.txnIds.isEmpty()) "لا افتتاحي مسجّل لهذا الصندوق؛ يمكنك إضافته." else "الافتتاحي الحالي: ${Fmt.money(Money(i.amountMinor, a.currency))} بتاريخ \u2066${i.date}\u2069", color = c.mute)
+            AmountField(amount, a.currency, "الافتتاحي الصحيح (0 يلغيه)")
+            DateField(date, { date = it }, "تاريخه")
+            TextIn(reason, { reason = it }, "سبب التصحيح (مطلوب)")
+            if (i != null && m != null) Text("الأثر: الرصيد الحالي يتغير بـ ${Fmt.money(m - Money(i.amountMinor, a.currency))}. يُعكس القيد القديم ويبقى في السجل.", style = MaterialTheme.typography.bodySmall)
+            if (i?.affectsFinalInventory == true) Text("تنبيه: يقع ضمن فترة جرد معتمد؛ يبقى الجرد كما اعتُمد، وأنشئ مراجعة جديدة له إن لزم.", color = c.warn, style = MaterialTheme.typography.bodySmall)
+        }
+    }, confirmButton = {
+        TextButton(enabled = !busy && m != null && reason.isNotBlank(), onClick = {
+            busy = true
+            vm.launchSafe("صُحّح الافتتاحي") { vm.repo.correctOpening(a.id, m!!.minor, date, reason, rid); onDone() }.invokeOnCompletion { busy = false }
+        }) { Text("صحّح") }
+    }, dismissButton = { TextButton(onClick = onDone) { Text("إلغاء", color = c.mute) } })
 }
 
 @Composable

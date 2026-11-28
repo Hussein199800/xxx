@@ -237,7 +237,8 @@ object ReportBuilders {
         val name = if (p.hideNames) "طرف" else party
         return ReportDoc(
             ReportDoc.Kind.REPORT, "كشف حساب: $name", period(from, to), generatedAt,
-            filters = listOf("العملة" to cur.nameAr, "رصيد سابق" to if (includePrior) "مُدرج" else "غير مُدرج"),
+            filters = listOf("العملة" to cur.nameAr, "رصيد سابق" to if (includePrior) "مُدرج" else "غير مُدرج") +
+                (if (st.lines.any { it.date.isAfter(LocalDate.now()) }) listOf("تنبيه" to "يشمل حركات بتاريخ مستقبلي") else emptyList()),
             summary = listOf("عليه ($currency)" to money(st.totalOn), "له ($currency)" to money(st.totalFor), "${st.closingLabel} ($currency)" to money(st.closing.abs())),
             tables = listOf(ReportTable("الحركات", "الكشف", listOf(Column("التاريخ", ColType.DATE), Column("النوع", ColType.TEXT, 0.5f), Column("المبلغ", ColType.NUMBER),
                 Column("التفاصيل", ColType.TEXT, 1.6f), Column("الرصيد", ColType.NUMBER), Column("العملة", ColType.CODE)), rows,
