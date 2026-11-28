@@ -13,6 +13,7 @@ class FakeDrive(var permissionId: String = "perm-A") : DriveApi {
     var failNextUpload: IOException? = null
     var storeBeforeFailing = false
     var authExpired = false
+    var corruptStored = false
     private var clock = 0
     override fun about(): DriveApi.About { if (authExpired) throw DriveAuthException("expired"); return DriveApi.About(permissionId, "$permissionId@example.com", "Test") }
     override fun generateId() = nextIds.removeFirstOrNull() ?: "id-${files.size + 100}-${clock++}"
@@ -22,7 +23,7 @@ class FakeDrive(var permissionId: String = "perm-A") : DriveApi {
         return store(id, name, appProperties, bytes)
     }
     private fun store(id: String, name: String, p: Map<String, String>, b: ByteArray): DriveApi.FileMeta {
-        val m = DriveApi.FileMeta(id, name, b.size.toLong(), "2026-11-%02dT00:00:%02dZ".format(1 + clock / 60, clock++ % 60), DriveBackupEngine.md5(b), p)
+        val m = DriveApi.FileMeta(id, name, b.size.toLong(), "2026-11-%02dT00:00:%02dZ".format(1 + clock / 60, clock++ % 60), DriveBackupEngine.md5(if (corruptStored) b + 1 else b), p)
         files[id] = m to b; return m
     }
     override fun get(id: String) = files[id]?.first
@@ -91,5 +92,30 @@ class DriveEngineTest {
     @Test fun expiredAuthAsksForRelink() {
         val d = FakeDrive(); d.authExpired = true
         assertTrue(DriveBackupEngine(d, "inst").run(job(), bytes) {} is DriveBackupEngine.Result.NeedsAuth)
+    }
+
+    /** R15: أخطاء HTTP المؤقتة تعيد المحاولة بالمعرّف نفسه، والدائمة تفشل، والملف التالف لا يُعتمد. */
+    @Test fun transientHttpRetriesWithSameIdPermanentFails() {
+        for (code in listOf(429, 500, 503, 408)) {
+            val d = FakeDrive(); d.nextIds.add("fx-$code"); d.failNextUpload = DriveHttpException(code, "busy")
+            var id: String? = null
+            val r = DriveBackupEngine(d, "inst").run(job(), bytes) { id = it }
+            assertTrue("$code", r is DriveBackupEngine.Result.Retry); assertEquals("fx-$code", (r as DriveBackupEngine.Result.Retry).fileId)
+            // إعادة المحاولة بالمعرّف المثبّت تنجح دون تكرار
+            assertTrue(DriveBackupEngine(d, "inst").run(job(fileId = id), bytes) {} is DriveBackupEngine.Result.Verified)
+            assertEquals(1, d.files.size)
+        }
+        val d = FakeDrive(); d.failNextUpload = DriveHttpException(403, "forbidden")
+        assertTrue(DriveBackupEngine(d, "inst").run(job(), bytes) {} is DriveBackupEngine.Result.Failed)
+    }
+
+    @Test fun corruptedUploadIsNotVerifiedAndNothingPruned() {
+        val d = FakeDrive()
+        repeat(8) { DriveBackupEngine(d, "inst").run(job(it + 1), bytes) {} }
+        val before = d.files.size
+        d.corruptStored = true
+        val r = DriveBackupEngine(d, "inst").run(job(20), bytes) {}
+        assertTrue(r is DriveBackupEngine.Result.Failed)
+        assertEquals("لا حذف قبل تأكيد نسخة جديدة", before + 1, d.files.size)
     }
 }

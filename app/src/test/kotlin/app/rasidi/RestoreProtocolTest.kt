@@ -115,4 +115,22 @@ class RestoreProtocolTest {
             }
         }
     }
+
+    /** R13: نسخ الأمان تُقلَّم إلى آخر 10 بعد التحقق من الجديدة، ولا تُحذف الجديدة أبداً. */
+    @Test fun safetyCopiesAreRetainedBounded() = runBlocking {
+        val repo = TestUtil.repo(TestUtil.memDb()); repo.ensureCategories()
+        val root = File(TestUtil.ctx.filesDir, "safety-ret-${System.nanoTime()}")
+        val svc = BackupService(TestUtil.ctx, repo, { "i" }, clock = { System.nanoTime() / 1000 }, safetyRoot = { root })
+        val code = RecoveryCode.generate()
+        var last: File? = null
+        repeat(12) { n ->
+            repo.createAccount("ح$n", AccountType.CASH, Currencies.USD, 1_00, d)
+            val file = BackupFormat.encrypt(DemoData.snapshot(), code, "x", "MANUAL", 1, "t").second
+            last = (svc.restore(svc.preview(file, code), code) as BackupService.RestoreResult.Done).safetyFile
+        }
+        val files = svc.safetyFiles()
+        assertEquals(BackupService.SAFETY_KEEP, files.size)
+        assertTrue(files.contains(last))
+        files.forEach { assertNotNull(BackupFormat.decrypt(it.readBytes(), code)) }
+    }
 }

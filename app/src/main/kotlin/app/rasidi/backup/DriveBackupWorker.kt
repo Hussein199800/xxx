@@ -34,10 +34,13 @@ class DriveBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
             val job: BackupJobEntity = existing ?: run {
                 if (kind == "AUTO" && dev.ledgerVersion == dev.lastVerifiedVersion) return@withLock Result.success()
                 val code = dev.recoveryCode() ?: return@withLock Result.failure(workDataOf(KEY_ERROR to "لا يوجد رمز استعادة على هذا الجهاز"))
+                // الإصدار يُقرأ قبل اللقطة: الإصدار يزداد بعد التزام كل كتابة، فكل ما يغطيه موجود في اللقطة حتماً.
+                // (قراءته بعد اللقطة قد تنسب للملف كتابةً لم تدخله فيتخطاها النسخ التالي.)
+                val coveredVersion = dev.ledgerVersion
                 val created = c.backupService.create(code, kind)
                 val id = UUID.randomUUID().toString()
                 val f = File(queueDir(applicationContext), "$id.rasidi").apply { writeBytes(created.bytes) }
-                BackupJobEntity(id, kind, perm, null, created.header.backupId, dev.ledgerVersion, f.absolutePath, "QUEUED", 0, "", System.currentTimeMillis(), System.currentTimeMillis()).also { jobs.insert(it) }
+                BackupJobEntity(id, kind, perm, null, created.header.backupId, coveredVersion, f.absolutePath, "QUEUED", 0, "", System.currentTimeMillis(), System.currentTimeMillis()).also { jobs.insert(it) }
             }
             val file = File(job.localPath)
             if (!file.exists()) { jobs.update(job.copy(status = "FAILED", lastError = "ملف الطابور مفقود", updatedAtUtc = now())); return@withLock Result.failure() }
@@ -57,7 +60,7 @@ class DriveBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
             when (r) {
                 is DriveBackupEngine.Result.Verified -> {
                     jobs.update(current.copy(status = "VERIFIED", lastError = "", updatedAtUtc = now()))
-                    dev.lastVerifiedAt = now(); dev.lastVerifiedVersion = job.ledgerVersion; dev.driveRelinkNeeded = false
+                    dev.lastVerifiedAt = now(); dev.lastVerifiedVersion = maxOf(dev.lastVerifiedVersion, job.ledgerVersion); dev.driveRelinkNeeded = false
                     file.delete()
                     Result.success()
                 }
@@ -95,7 +98,10 @@ class DriveBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
                     .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.MINUTES).build())
         }
 
-        /** يوقف كل المهام قبل الاستعادة أو فصل الحساب. */
+        /**
+         * يوقف كل المهام قبل الاستعادة أو فصل الحساب أو تبديله. **يُستدعى والمستدعي ممسك بـ backupLock**:
+         * إلغاء WorkManager لا يعني انتهاء IO الجاري، والقفل ينتظر العامل الجاري حتى يخرج قبل حذف ملفات الطابور.
+         */
         suspend fun cancelAll(ctx: Context, jobs: app.rasidi.data.BackupJobDao) {
             val wm = WorkManager.getInstance(ctx)
             wm.cancelUniqueWork(UNIQUE_NOW); wm.cancelUniqueWork(UNIQUE_AUTO)

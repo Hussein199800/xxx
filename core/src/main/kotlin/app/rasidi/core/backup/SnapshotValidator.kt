@@ -7,6 +7,8 @@ import java.time.LocalDate
 
 /** يتحقق من المعرّفات والعلاقات والقيم قبل الاستعادة. يعيد قائمة المشكلات (فارغة = سليمة). */
 object SnapshotValidator {
+    const val MAX_ROWS = 2_000_000
+    const val MAX_TEXT = 2_000
     fun validate(s: Snapshot): List<String> {
         val p = mutableListOf<String>()
         fun <T> uniq(name: String, l: List<T>, id: (T) -> String) {
@@ -23,6 +25,37 @@ object SnapshotValidator {
         uniq("gold", s.goldHoldings) { it.id }; uniq("goldMoves", s.goldMoves) { it.id }; uniq("rates", s.rates) { it.id }
         uniq("inventories", s.inventories) { it.id }; uniq("zakat", s.zakatEstimates) { it.id }; uniq("zakatPayments", s.zakatPayments) { it.id }
         uniq("txn.requestId", s.txns) { it.requestId }
+        uniq("installments", s.installments) { it.id }; uniq("inventoryLines", s.inventoryLines) { it.id }; uniq("audit", s.audit) { it.id }
+        uniq("settings", s.settings) { it.key }
+
+        // حدود الحجم: عدد الصفوف وأطوال النصوص
+        if (s.counts().values.sum() > MAX_ROWS) p += "عدد السجلات أكبر من الحد"
+        fun txt(name: String, v: String?, max: Int = MAX_TEXT) { if (v != null && v.length > max) p += "نص طويل جداً في $name" }
+        fun enum(name: String, v: String, allowed: Set<String>) { if (v !in allowed) p += "قيمة غير معروفة في $name: ${v.take(20)}" }
+        fun <E : Enum<E>> names(vs: Array<E>) = vs.map { it.name }.toSet()
+        val txnTypes = names(app.rasidi.core.ledger.TxnType.values()); val entryKinds = names(app.rasidi.core.ledger.EntryKind.values())
+        val units = setOf(app.rasidi.core.money.Rate.GOLD24_GRAM, app.rasidi.core.money.Rate.SILVER_GRAM)
+        fun grams(name: String, v: String) { val g = runCatching { BigDecimal(v) }.getOrNull(); if (g == null || g.abs() > BigDecimal(1_000_000_000) || g.scale() > 18) p += "وزن غير صالح في $name" }
+        s.accounts.forEach { enum("account.type", it.type, names(app.rasidi.core.ledger.AccountType.values())); txt("account", it.name, 200) }
+        s.categories.forEach { enum("category.kind", it.kind, setOf("INCOME", "EXPENSE")); txt("category", it.name, 200) }
+        val txById = s.txns.associateBy { it.id }
+        s.txns.forEach { t ->
+            enum("txn.type", t.type, txnTypes); txt("txn.note", t.note); txt("txn.party", t.party, 200)
+            t.reversesId?.let { r -> if (txById[r]?.reversedById != t.id) p += "حركة عكس لا تطابق أصلها" }
+            t.reversedById?.let { r -> if (txById[r]?.reversesId != t.id) p += "حركة معكوسة بلا حركة عكس مطابقة" }
+        }
+        s.entries.forEach { enum("entry.kind", it.kind, entryKinds) }
+        s.debts.forEach { enum("debt.direction", it.direction, names(app.rasidi.core.ledger.DebtDirection.values())); txt("debt.party", it.party, 200); txt("debt.note", it.note) }
+        s.installments.forEach { amt("installment", it.amountMinor) }
+        s.debtPayments.forEach { amt("payment", it.debtAmountMinor); it.walletAmountMinor?.let { w -> amt("payment.wallet", w) }; it.walletCurrency?.let { c -> cur("payment.wallet", c) } }
+        s.goldHoldings.forEach { enum("gold.kind", it.kind, names(app.rasidi.core.ledger.GoldKind.values())); txt("gold", it.name, 200) }
+        s.goldMoves.forEach { enum("gold.move", it.type, names(app.rasidi.core.ledger.GoldMoveType.values())); grams("gold", it.grams) }
+        s.rates.forEach { if (Currencies.find(it.unit) == null && it.unit !in units) p += "وحدة سعر غير معروفة"; enum("rate.direction", it.direction, names(app.rasidi.core.money.RateDirection.values())); txt("rate.source", it.source, 200) }
+        s.inventories.forEach { date("inventory", it.date); enum("inventory.status", it.status, setOf("FINAL", "DRAFT")); dec("inventory", it.pricedNetUsd) }
+        s.zakatPayments.forEach { date("zakatPayment", it.date); amt("zakatPayment", it.amountMinor); dec("zakatPayment", it.usd) }
+        s.zakatEstimates.forEach { z -> listOf(z.assetsUsd, z.receivablesUsd, z.deductionsUsd, z.baseUsd, z.zakatUsd, z.percent).forEach { dec("zakat", it) } }
+        s.parties.forEach { txt("party", it.name, 200); txt("party.note", it.note) }
+        s.settings.forEach { txt("setting", it.value, 4000) }
 
         val acc = s.accounts.associateBy { it.id }; val txn = s.txns.map { it.id }.toSet(); val cat = s.categories.map { it.id }.toSet()
         val debts = s.debts.associateBy { it.id }; val gold = s.goldHoldings.map { it.id }.toSet()

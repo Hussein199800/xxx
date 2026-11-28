@@ -76,7 +76,7 @@ fun BackupScreen(vm: MainViewModel, nav: NavController) {
             try {
                 withContext(Dispatchers.IO) { ctx.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(b!!) } }
                 // تحقق: أعد قراءة الملف من الوجهة وافتح ترويسته
-                val back = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() } }
+                val back = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { readCapped(it, BackupFormat.MAX_FILE_BYTES + 1) } }
                 BackupFormat.readHeader(back); check(back.contentEquals(b))
                 dev.lastLocalBackupAt = System.currentTimeMillis(); refresh++
                 vm.message("حُفظت النسخة وتحقّقت قراءتها")
@@ -233,7 +233,7 @@ fun BackupScreen(vm: MainViewModel, nav: NavController) {
         val safety = container.backupService.safetyFiles()
         if (safety.isNotEmpty()) {
             SectionHeader("نسخ الأمان قبل الاستعادة")
-            RCard { safety.take(5).forEach { f -> Row(verticalAlignment = Alignment.CenterVertically) { Text(fmtTime(f.lastModified()), Modifier.weight(1f)); TextButton(onClick = { restoreBytes = f.readBytes(); restoreSource = "نسخة أمان" }) { Text("استعد") } } } }
+            RCard { safety.take(5).forEach { f -> Row(verticalAlignment = Alignment.CenterVertically) { Text(fmtTime(f.lastModified()), Modifier.weight(1f)); TextButton(onClick = { restoreBytes = f.inputStream().use { readCapped(it, BackupFormat.MAX_FILE_BYTES + 1) }; restoreSource = "نسخة أمان" }) { Text("استعد") } } } }
         }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = Sp.sm))
     }
@@ -242,7 +242,7 @@ fun BackupScreen(vm: MainViewModel, nav: NavController) {
     switchConfirm?.let { a ->
         AlertDialog(onDismissRequest = { switchConfirm = null }, title = { Text("تبديل حساب Google؟") },
             text = { Text("الحساب الجديد ${a.email} يختلف عن المربوط ${dev.driveEmail}. ستتوقف المهام القديمة، وستذهب النسخ القادمة إلى الحساب الجديد. النسخ في الحساب القديم تبقى كما هي.") },
-            confirmButton = { TextButton(onClick = { scope.launch { DriveBackupWorker.cancelAll(ctx, container.db.jobs()); dev.drivePermissionId = a.permissionId; dev.driveEmail = a.email; dev.driveRelinkNeeded = false; switchConfirm = null; refresh++ } }) { Text("بدّل") } },
+            confirmButton = { TextButton(onClick = { scope.launch { container.backupLock.withLock { DriveBackupWorker.cancelAll(ctx, container.db.jobs()) }; dev.drivePermissionId = a.permissionId; dev.driveEmail = a.email; dev.driveRelinkNeeded = false; switchConfirm = null; refresh++ } }) { Text("بدّل") } },
             dismissButton = { TextButton(onClick = { switchConfirm = null }) { Text("إلغاء") } })
     }
     if (unlinkConfirm) AlertDialog(onDismissRequest = { unlinkConfirm = false }, title = { Text("فصل حساب Google؟") },

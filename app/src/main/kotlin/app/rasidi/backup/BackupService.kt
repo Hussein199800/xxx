@@ -83,9 +83,19 @@ class BackupService(
             if (!tmp.renameTo(dest)) throw java.io.IOException("تعذّر حفظ نسخة الأمان")
             val check = BackupFormat.decrypt(dest.readBytes(), code)
             if (check.payload.fingerprint != cur.canonical().fingerprint()) { dest.delete(); throw java.io.IOException("نسخة الأمان لا تطابق السجل الحالي") }
+            pruneSafety(keep = dest)
             return dest
         } finally { tmp.delete() }
     }
+
+    /** يبقي أحدث [SAFETY_KEEP] نسخ أمان (بعد التحقق من الجديدة فقط)، ويحذف بقايا .tmp القديمة. لا يحذف [keep] أبداً. */
+    private fun pruneSafety(keep: File) {
+        val dir = safetyDir()
+        dir.listFiles()?.filter { it.name.endsWith(".tmp") && clock() - it.lastModified() > 3_600_000 }?.forEach { it.delete() }
+        safetyFiles().filter { it != keep }.drop(SAFETY_KEEP - 1).forEach { it.delete() }
+    }
+
+    companion object { const val SAFETY_KEEP = 10 }
 
     fun safetyDir() = safetyRoot().apply { mkdirs() }
     fun safetyFiles(): List<File> = safetyDir().listFiles()?.filter { it.name.endsWith(".rasidi") }?.sortedByDescending { it.lastModified() } ?: emptyList()

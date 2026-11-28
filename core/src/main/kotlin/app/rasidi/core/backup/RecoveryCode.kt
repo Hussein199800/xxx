@@ -6,19 +6,23 @@ import java.security.SecureRandom
 /**
  * رمز استعادة 256 بت محمول، مكتوب بـ Base32 (Crockford) في مجموعات من 4 أحرف،
  * مع 4 أحرف تحقق من SHA-256 لاكتشاف أخطاء الإدخال قبل محاولة فك التشفير.
+ * التحقق لاكتشاف أخطاء الكتابة فقط، وليس توثيقاً أمنياً للملف — التوثيق من AES-GCM.
  * مثال: «7K2M-…-Q9XZ» (13 مجموعة بيانات + مجموعة تحقق).
  */
-class RecoveryCode private constructor(val bytes: ByteArray) {
-    init { require(bytes.size == 32) }
+class RecoveryCode private constructor(private val raw: ByteArray) {
+    init { require(raw.size == 32) }
+    /** نسخة دفاعية: تعديلها لا يغيّر الرمز. (لا نَعِد بمحو مضمون للذاكرة على JVM.) */
+    val bytes: ByteArray get() = raw.copyOf()
+    private val bytesRef get() = raw
 
     fun display(): String {
-        val body = encode(bytes)
-        val check = encode(MessageDigest.getInstance("SHA-256").digest(bytes)).take(4)
+        val body = encode(raw)
+        val check = encode(MessageDigest.getInstance("SHA-256").digest(raw)).take(4)
         return (body + check).chunked(4).joinToString("-")
     }
 
-    override fun equals(other: Any?) = other is RecoveryCode && other.bytes.contentEquals(bytes)
-    override fun hashCode() = bytes.contentHashCode()
+    override fun equals(other: Any?) = other is RecoveryCode && other.bytesRef.contentEquals(raw)
+    override fun hashCode() = raw.contentHashCode()
     override fun toString() = "RecoveryCode(****)"
 
     companion object {

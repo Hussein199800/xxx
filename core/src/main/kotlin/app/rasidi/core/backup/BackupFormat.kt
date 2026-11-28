@@ -45,6 +45,9 @@ object BackupFormat {
     /** إصدار بيانات اللقطة (يتبع مخطط Room). */
     const val DATA_VERSION = 3
     const val MAX_FILE_BYTES = 64L * 1024 * 1024
+    /** حد المحتوى بعد فك الضغط: يكفي ملايين الحركات ولا يستنزف ذاكرة الهاتف. */
+    const val MAX_PLAIN_BYTES = 192L * 1024 * 1024
+    val KINDS = setOf("MANUAL", "AUTO", "SAFETY")
     private const val MAX_HEADER = 16 * 1024
     private val rnd = SecureRandom()
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -110,6 +113,12 @@ object BackupFormat {
         val header = try {
             json.decodeFromString(Header.serializer(), String(file, MAGIC.size + 4, len, Charsets.UTF_8))
         } catch (e: Exception) { throw BackupException(Reason.CORRUPT_HEADER, "ترويسة الملف تالفة") }
+        // معاملات التشفير كما وُثّقت فقط، بأطوال صحيحة
+        val saltOk = runCatching { b64d(header.salt).size == 16 }.getOrDefault(false)
+        val nonceOk = runCatching { b64d(header.nonce).size == 12 }.getOrDefault(false)
+        if (!saltOk || !nonceOk || header.cipher != "AES-256-GCM" || header.kdf != "HKDF-SHA256" || header.kind !in KINDS ||
+            header.backupId.isBlank() || header.backupId.length > 64 || header.format < 1 || header.dataVersion < 1)
+            throw BackupException(Reason.CORRUPT_HEADER, "ترويسة الملف تالفة أو بمعاملات غير مدعومة")
         if (header.format > FORMAT_VERSION) throw BackupException(Reason.NEWER_FORMAT, "النسخة من صيغة أحدث (${header.format}). حدّث التطبيق أولاً")
         if (header.dataVersion > DATA_VERSION) throw BackupException(Reason.NEWER_DATA, "بيانات النسخة من إصدار أحدث (${header.dataVersion}). حدّث التطبيق أولاً")
         return header
@@ -159,7 +168,8 @@ object BackupFormat {
         }
         val upgraded = BackupMigrations.upgrade(header.dataVersion, jsonText)
         val decoded = try { BackupJson.decodeFromString(Payload.serializer(), upgraded) } catch (e: Exception) {
-            throw BackupException(Reason.CORRUPT_PAYLOAD, "محتوى النسخة غير مقروء: ${e.message?.take(80)}")
+            // لا نعرض نص المحلّل: قد يتضمن محتوى مالياً
+            throw BackupException(Reason.CORRUPT_PAYLOAD, "محتوى النسخة غير مقروء")
         }
         val snap = decoded.snapshot.canonical()
         val currentFp = snap.fingerprint()
@@ -187,7 +197,7 @@ object BackupFormat {
         val out = ByteArrayOutputStream()
         GZIPInputStream(ByteArrayInputStream(b)).use { inp ->
             val buf = ByteArray(16 * 1024); var total = 0L
-            while (true) { val n = inp.read(buf); if (n < 0) break; total += n; if (total > 512L * 1024 * 1024) throw IllegalStateException("too big"); out.write(buf, 0, n) }
+            while (true) { val n = inp.read(buf); if (n < 0) break; total += n; if (total > MAX_PLAIN_BYTES) throw IllegalStateException("too big"); out.write(buf, 0, n) }
         }
         return out.toByteArray()
     }
