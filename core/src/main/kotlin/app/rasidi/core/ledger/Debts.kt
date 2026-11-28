@@ -11,7 +11,7 @@ enum class DebtDirection(val ar: String) {
     I_OWE("عليّ"),
 }
 
-enum class DebtStatus(val ar: String) { OPEN("مفتوح"), PARTIAL("مسدّد جزئياً"), SETTLED("مسدّد"), OVERDUE("متأخر") }
+enum class DebtStatus(val ar: String) { OPEN("مفتوح"), PARTIAL("مسدّد جزئياً"), SETTLED("مسدّد"), OVERDUE("متأخر"), CANCELLED("ملغى") }
 
 data class Installment(val dueDate: LocalDate, val amount: Money)
 
@@ -24,8 +24,15 @@ data class Debt(
     val dueDate: LocalDate? = null,
     val installments: List<Installment> = emptyList(),
     val note: String? = null,
+    /**
+     * أُلغي الدين بعكس حركة إنشائه (DEBT_NEW). يبقى السجل كاملاً للتاريخ، لكن أصله لا يُحتسب.
+     * مشتق من البيانات (لا عمود في القاعدة): حركة DEBT_NEW للدين لها reversedById.
+     */
+    val cancelled: Boolean = false,
 ) {
     val currency: CurrencyDef get() = principal.currency
+    /** الأصل المحتسب: صفر للدين الملغى. */
+    val effectivePrincipal: Money get() = if (cancelled) Money.zero(principal.currency) else principal
 }
 
 /** دفعة: مبلغ الدين بعملة الدين، ومبلغ المحفظة بعملة الحساب (قد تختلف). */
@@ -44,7 +51,7 @@ object DebtCalc {
             .fold(Money.zero(debt.currency)) { a, p -> a + p.debtAmount }
 
     fun remaining(debt: Debt, payments: List<DebtPayment>, onOrBefore: LocalDate? = null): Money =
-        debt.principal - paid(debt, payments, onOrBefore)
+        debt.effectivePrincipal - paid(debt, payments, onOrBefore)
 
     /** المستحق حتى تاريخ: مجموع الأقساط المستحقة، أو كامل الأصل عند استحقاق واحد. */
     fun dueBy(debt: Debt, date: LocalDate): Money = when {
@@ -55,6 +62,7 @@ object DebtCalc {
     }
 
     fun status(debt: Debt, payments: List<DebtPayment>, today: LocalDate): DebtStatus {
+        if (debt.cancelled) return DebtStatus.CANCELLED
         val rem = remaining(debt, payments)
         val paid = paid(debt, payments)
         if (rem.minor <= 0) return DebtStatus.SETTLED
@@ -64,6 +72,7 @@ object DebtCalc {
 
     /** أقرب استحقاق غير مغطّى. */
     fun nextDue(debt: Debt, payments: List<DebtPayment>): LocalDate? {
+        if (debt.cancelled) return null
         val paid = paid(debt, payments)
         if (remaining(debt, payments).minor <= 0) return null
         if (debt.installments.isEmpty()) return debt.dueDate
@@ -79,6 +88,7 @@ object DebtCalc {
 
     /** يرفض الدفعة التي تتجاوز الرصيد المتبقي ويعرض السبب. */
     fun validatePayment(debt: Debt, payments: List<DebtPayment>, amount: Money, excludePaymentId: String? = null): Validation {
+        if (debt.cancelled) return Validation.Rejected("الدين ملغى؛ لا تُسجَّل عليه دفعات")
         if (amount.currency.code != debt.currency.code) return Validation.Rejected("مبلغ الدين يجب أن يكون بعملة الدين ${debt.currency.code}")
         if (amount.minor <= 0) return Validation.Rejected("المبلغ يجب أن يكون أكبر من صفر")
         val rem = remaining(debt, payments.filter { it.id != excludePaymentId })

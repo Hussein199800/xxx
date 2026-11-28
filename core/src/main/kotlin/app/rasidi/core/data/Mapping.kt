@@ -9,11 +9,16 @@ import java.time.LocalDate
 /** تحويل الكيانات المخزّنة إلى نماذج الحساب في core. */
 fun AccountEntity.toDomain() = Account(id, name, AccountType.valueOf(type), Currencies.of(currency), allowNegative, archived)
 fun EntryEntity.toDomain() = Entry(id, txnId, accountId, EntryKind.valueOf(kind), Money(amountMinor, Currencies.of(currency)), LocalDate.parse(date), categoryId)
-fun DebtEntity.toDomain(inst: List<InstallmentEntity>) = Debt(
+/** معرّفات الديون الملغاة: حركة إنشائها معكوسة. */
+fun cancelledDebtIds(txns: List<TxnEntity>): Set<String> =
+    txns.filter { it.type == TxnType.DEBT_NEW.name && it.reversedById != null }.mapNotNull { it.debtId }.toSet()
+
+fun DebtEntity.toDomain(inst: List<InstallmentEntity>, cancelled: Set<String> = emptySet()) = Debt(
     id, party, DebtDirection.valueOf(direction), Money(principalMinor, Currencies.of(currency)), LocalDate.parse(date),
     dueDate?.let(LocalDate::parse),
     inst.filter { it.debtId == id }.sortedBy { it.dueDate }.map { Installment(LocalDate.parse(it.dueDate), Money(it.amountMinor, Currencies.of(currency))) },
     note,
+    id in cancelled,
 )
 fun DebtPaymentEntity.toDomain(debtCurrency: CurrencyDef) = DebtPayment(
     id, debtId, LocalDate.parse(date), Money(debtAmountMinor, debtCurrency),
@@ -27,7 +32,7 @@ fun RateEntity.toDomain() = Rate(id, unit, BigDecimal(entered), RateDirection.va
 class LedgerView(val s: Snapshot) {
     val accounts = s.accounts.map { it.toDomain() }
     val entries = s.entries.map { it.toDomain() }
-    val debts = s.debts.map { it.toDomain(s.installments) }
+    val debts = cancelledDebtIds(s.txns).let { c -> s.debts.map { it.toDomain(s.installments, c) } }
     val payments: List<DebtPayment> = s.debtPayments.mapNotNull { p -> debts.firstOrNull { it.id == p.debtId }?.let { p.toDomain(it.currency) } }
     val gold = s.goldHoldings.map { it.toDomain() }
     val goldMoves = s.goldMoves.map { it.toDomain() }

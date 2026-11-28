@@ -246,7 +246,7 @@ fun DebtsScreen(vm: MainViewModel, nav: NavController, asPage: Boolean = false) 
     var dir by remember { mutableStateOf(DebtDirection.OWED_TO_ME) }
     var showSettled by remember { mutableStateOf(false) }
     var byPerson by rememberSaveable { mutableStateOf(false) }
-    val list = rows.filter { it.debt.direction == dir && !it.archived && (showSettled || it.status != DebtStatus.SETTLED) }.sortedWith(compareBy({ it.status == DebtStatus.SETTLED }, { it.nextDue ?: LocalDate.MAX }))
+    val list = rows.filter { it.debt.direction == dir && !it.archived && (showSettled || (it.status != DebtStatus.SETTLED && it.status != DebtStatus.CANCELLED)) }.sortedWith(compareBy({ it.status == DebtStatus.SETTLED || it.status == DebtStatus.CANCELLED }, { it.nextDue ?: LocalDate.MAX }))
     Column(Modifier.fillMaxSize().background(LocalR.current.bg)) {
     if (asPage) PageTopBar("الديون والأقساط", { nav.popBackStack() })
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Sp.md).padding(bottom = 170.dp)) {
@@ -276,7 +276,7 @@ fun DebtsScreen(vm: MainViewModel, nav: NavController, asPage: Boolean = false) 
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         AmountText(r.remaining)
-                        StatusChip(r.status.ar, when (r.status) { DebtStatus.SETTLED -> Tone.OK; DebtStatus.OVERDUE -> Tone.DANGER; DebtStatus.PARTIAL -> Tone.GOLD; DebtStatus.OPEN -> Tone.INFO })
+                        StatusChip(r.status.ar, when (r.status) { DebtStatus.SETTLED -> Tone.OK; DebtStatus.OVERDUE -> Tone.DANGER; DebtStatus.PARTIAL -> Tone.GOLD; DebtStatus.OPEN -> Tone.INFO; DebtStatus.CANCELLED -> Tone.INFO })
                     }
                 }
                 if (r.debt.principal.minor > 0) {

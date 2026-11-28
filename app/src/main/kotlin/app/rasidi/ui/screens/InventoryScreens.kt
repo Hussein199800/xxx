@@ -114,6 +114,9 @@ fun InventoryScreen(vm: MainViewModel, nav: NavController) {
                 }
                 if (openSaved == latest.id) {
                     val saved = savedInventory(latest, view.s.inventoryLines)
+                    // جرد حُفظ قبل تصحيح إشارة النقد السالب (1.4.1): القيمة المحفوظة تبقى كما اعتُمدت، ونعرض الصحيح بجانبها
+                    if (saved.pricedNet.setScale(2, app.rasidi.core.money.MoneyPolicy.ROUNDING).compareTo(BigDecimal(latest.pricedNetUsd).setScale(2, app.rasidi.core.money.MoneyPolicy.ROUNDING)) != 0)
+                        Text("تنبيه: صافي هذا الجرد بالحساب المصحّح ${Fmt.usd(saved.pricedNet)} (كان النقد السالب يُضاف بدل أن يُطرح). القيمة المعتمدة محفوظة كما هي؛ أنشئ مراجعة جديدة لاعتماد الرقم الصحيح.", style = MaterialTheme.typography.bodySmall, color = c.warn)
                     g.sortedByDescending { it.revision }.forEach { r -> Text("• مراجعة ${r.revision}: ${Fmt.usd(BigDecimal(r.pricedNetUsd))} — ${if (r.status == "FINAL") "معتمد" else "مسودة"}", style = MaterialTheme.typography.bodySmall, color = c.mute) }
                     Row(horizontalArrangement = Arrangement.spacedBy(Sp.xs)) {
                         if (latest.status == "FINAL") PrimaryButton("الزكاة", { nav.navigate(Routes.zakat(latest.id)) }, Modifier.weight(1f), icon = Icons.Filled.VolunteerActivism)

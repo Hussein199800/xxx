@@ -127,14 +127,15 @@ object ReportBuilders {
         val rows = pays.map { pm ->
             cum += pm.debtAmount
             listOf(Cell.d(pm.date), money(pm.debtAmount), Cell.Text(d.currency.code), pm.walletAmount?.let { money(it.abs()) } ?: Cell.Empty, Cell.t(pm.walletAmount?.currency?.code),
-                Cell.t(pm.accountId?.let { v.accountById[it]?.name } ?: "بلا حركة نقدية"), money(d.principal - cum))
+                Cell.t(pm.accountId?.let { v.accountById[it]?.name } ?: "بلا حركة نقدية"), money(d.effectivePrincipal - cum))
         }
         val inst = d.installments.map { listOf(Cell.d(it.dueDate), money(it.amount), Cell.Text(d.currency.code)) }
         return ReportDoc(
             ReportDoc.Kind.REPORT, "كشف دين: ${name(d.party, p, "طرف")}", "منذ ${arDate(d.date)}", generatedAt,
             filters = listOf("الاتجاه" to (if (d.direction == DebtDirection.OWED_TO_ME) "لي عند الناس" else "عليّ للناس")),
             meta = listOf("الحالة" to DebtCalc.status(d, pays, today).ar) + (d.dueDate?.let { listOf("الاستحقاق" to it.toString()) } ?: emptyList()) + privacyMeta(p),
-            summary = listOf("أصل الدين (${d.currency.code})" to money(d.principal), "المدفوع (${d.currency.code})" to money(d.principal - rem), "المتبقي (${d.currency.code})" to money(rem)),
+            summary = listOf("أصل الدين (${d.currency.code})" to money(d.principal), "المدفوع (${d.currency.code})" to money(DebtCalc.paid(d, pays)), "المتبقي (${d.currency.code})" to money(rem)) +
+                (if (d.cancelled) listOf("ملغى بعكس حركة الإنشاء" to Cell.Text("الأصل لا يُحتسب")) else emptyList()),
             tables = listOfNotNull(
                 ReportTable("الدفعات", "الدفعات", listOf(Column("التاريخ", ColType.DATE), Column("مبلغ الدين", ColType.NUMBER), Column("عملة الدين", ColType.CODE), Column("مبلغ المحفظة", ColType.NUMBER), Column("عملة المحفظة", ColType.CODE), Column("الحساب", ColType.TEXT), Column("المتبقي بعدها", ColType.NUMBER)), rows),
                 if (inst.isNotEmpty()) ReportTable("جدول الأقساط", "الأقساط", listOf(Column("الاستحقاق", ColType.DATE), Column("المبلغ", ColType.NUMBER), Column("العملة", ColType.CODE)), inst) else null,

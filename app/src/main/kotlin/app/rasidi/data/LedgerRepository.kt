@@ -21,6 +21,7 @@ class LedgerException(message: String) : Exception(message)
  * [requestId] يمنع حفظ الضغط المكرر: إعادة الطلب نفسه تعيد الحركة الموجودة دون تكرار.
  */
 class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = System::currentTimeMillis, private val onWrite: () -> Unit = {}) {
+    companion object { const val UNDO_WINDOW_MS = 10 * 60_000L }
     private val dao = db.dao()
     private val _version = MutableStateFlow(0L)
     /** يزداد مع كل كتابة ناجحة؛ تراقبه الواجهة والنسخ التلقائي. */
@@ -65,6 +66,8 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
 
     suspend fun createAccount(name: String, type: AccountType, currency: CurrencyDef, openingMinor: Long, openingDate: LocalDate, allowNegative: Boolean = false, requestId: String = uuid()): String = write {
         require(name.isNotBlank()) { "اسم الحساب مطلوب" }
+        if (openingMinor < 0 && !allowNegative) throw LedgerException("الرصيد الافتتاحي سالب؛ فعّل «السماح بالسالب» لهذا الحساب أولاً")
+        if (kotlin.math.abs(openingMinor) > MoneyPolicy.MAX_MINOR) throw LedgerException("الرصيد الافتتاحي أكبر من الحد المسموح")
         val id = uuid()
         dao.insertAccount(AccountEntity(id, name.trim(), type.name, currency.code, allowNegative, false, dao.accounts().size + 1, clock()))
         if (openingMinor != 0L) {
@@ -88,17 +91,65 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
 
     private suspend fun account(id: String): Account = dao.accounts().firstOrNull { it.id == id }?.toDomain() ?: throw LedgerException("الحساب غير موجود")
 
-    private suspend fun guardNegative(acc: Account, delta: Long, date: LocalDate) {
-        if (delta >= 0 || acc.allowNegative) return
-        val es = dao.entries().filter { it.accountId == acc.id }.map { it.toDomain() }
-        if (Balances.wouldGoNegative(acc, es, Money(delta, acc.currency), date))
-            throw LedgerException("الرصيد في «${acc.name}» لا يكفي. فعّل «السماح بالسالب» للحساب إن كان يدعم السحب")
+    /** مبلغ إدخال: موجب وضمن حد [MoneyPolicy.MAX_MINOR]. */
+    private fun checkAmount(minor: Long, what: String = "المبلغ") {
+        if (minor <= 0) throw LedgerException("$what يجب أن يكون أكبر من صفر")
+        if (minor > MoneyPolicy.MAX_MINOR) throw LedgerException("$what أكبر من الحد المسموح")
     }
+
+    private fun <T : Comparable<T>> cumulative(moves: List<Pair<LocalDate, T>>, dates: Collection<LocalDate>, zero: T, plus: (T, T) -> T): Map<LocalDate, T> {
+        val sorted = moves.sortedBy { it.first }
+        var i = 0; var run = zero
+        return dates.sorted().associateWith { d -> while (i < sorted.size && !sorted[i].first.isAfter(d)) { run = plus(run, sorted[i].second); i++ }; run }
+    }
+
+    /**
+     * يفحص مسار رصيد الحساب بعد تغيير افتراضي (حذف قيود [removeEntryIds] وإضافة [add])، في نهاية كل يوم
+     * من أقدم تاريخ متأثر حتى آخر قيد. السياسة الموثّقة: الترتيب داخل اليوم لا يُعتبر — الرصيد يُفحص في نهاية اليوم.
+     * يرفض: تجاوز حد المبالغ، أو (لحساب لا يسمح بالسالب) رصيداً سالباً أسوأ مما كان في أي يوم لاحق.
+     */
+    private suspend fun guardPath(acc: Account, removeEntryIds: Set<String>, add: List<Pair<LocalDate, Long>>) {
+        val all = dao.entries().filter { it.accountId == acc.id }.map { it.id to (LocalDate.parse(it.date) to java.math.BigInteger.valueOf(it.amountMinor)) }
+        val removed = all.filter { it.first in removeEntryIds }.map { it.second }
+        val addB = add.map { it.first to java.math.BigInteger.valueOf(it.second) }
+        val from = (removed.map { it.first } + add.map { it.first }).minOrNull() ?: return
+        val before = all.map { it.second }
+        val after = all.filter { it.first !in removeEntryIds }.map { it.second } + addB
+        val dates = ((before + after).map { it.first }.filter { !it.isBefore(from) } + from).toSet()
+        val b = cumulative(before, dates, java.math.BigInteger.ZERO, java.math.BigInteger::add)
+        val a = cumulative(after, dates, java.math.BigInteger.ZERO, java.math.BigInteger::add)
+        val max = java.math.BigInteger.valueOf(MoneyPolicy.MAX_MINOR)
+        for (d in dates.sorted()) {
+            val v = a.getValue(d)
+            if (v.abs() > max) throw LedgerException("الرصيد في «${acc.name}» سيتجاوز الحد المسموح")
+            if (!acc.allowNegative && v.signum() < 0 && v < b.getValue(d))
+                throw LedgerException("الرصيد في «${acc.name}» لا يكفي بتاريخ \u2066$d\u2069. فعّل «السماح بالسالب» للحساب إن كان يدعم السحب")
+        }
+    }
+
+    private suspend fun guardNegative(acc: Account, delta: Long, date: LocalDate) = guardPath(acc, emptySet(), listOf(date to delta))
+
+    /** مثل [guardPath] لوزن قطعة ذهب: لا يصبح الوزن سالباً في أي يوم لاحق. */
+    private suspend fun guardGold(holdingId: String, removeMoveIds: Set<String>, add: List<Pair<LocalDate, BigDecimal>>) {
+        val all = dao.goldMoves().filter { it.holdingId == holdingId }.map { it.id to (LocalDate.parse(it.date) to BigDecimal(it.grams)) }
+        val from = (all.filter { it.first in removeMoveIds }.map { it.second.first } + add.map { it.first }).minOrNull() ?: return
+        val before = all.map { it.second }
+        val after = all.filter { it.first !in removeMoveIds }.map { it.second } + add
+        val dates = ((before + after).map { it.first }.filter { !it.isBefore(from) } + from).toSet()
+        val b = cumulative(before, dates, BigDecimal.ZERO, BigDecimal::add)
+        val a = cumulative(after, dates, BigDecimal.ZERO, BigDecimal::add)
+        for (d in dates.sorted()) {
+            val v = a.getValue(d)
+            if (v.signum() < 0 && v < b.getValue(d)) throw LedgerException("وزن الذهب سيصبح سالباً بتاريخ \u2066$d\u2069 (بيع لاحق يعتمد على هذه الكمية)")
+        }
+    }
+
+    private suspend fun cancelledDebts() = app.rasidi.core.data.cancelledDebtIds(dao.txns())
 
     /** دخل أو مصروف بسيط. يعيد معرّف الحركة. */
     suspend fun addIncomeExpense(income: Boolean, accountId: String, amountMinor: Long, categoryId: String?, date: LocalDate, note: String, party: String, requestId: String, memberId: String? = null): String {
         existing(requestId)?.let { return it }
-        if (amountMinor <= 0) throw LedgerException("المبلغ يجب أن يكون أكبر من صفر")
+        checkAmount(amountMinor)
         return write {
             existing(requestId)?.let { return@write it }
             val acc = account(accountId)
@@ -119,6 +170,9 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         existing(requestId)?.let { return it }
         if (fromId == toId) throw LedgerException("اختر حسابين مختلفين")
         if (fromMinor <= 0 || toMinor <= 0) throw LedgerException("أدخل المبلغين")
+        checkAmount(fromMinor); checkAmount(toMinor)
+        if (feeMinor < 0) throw LedgerException("الرسوم لا تكون سالبة")
+        if (feeMinor > 0) checkAmount(feeMinor, "الرسوم")
         return write {
             existing(requestId)?.let { return@write it }
             val from = account(fromId); val to = account(toId)
@@ -126,6 +180,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
             val feeAcc = feeAccountId?.let { account(it) } ?: from
             guardNegative(from, -fromMinor - (if (feeAcc.id == from.id) feeMinor else 0), date)
             if (feeMinor > 0 && feeAcc.id != from.id) guardNegative(feeAcc, -feeMinor, date)
+            guardNegative(to, toMinor, date)
             val fx = if (from.currency.code != to.currency.code)
                 Money(toMinor, to.currency).amount.divide(Money(fromMinor, from.currency).amount, 10, java.math.RoundingMode.HALF_EVEN).stripTrailingZeros().toPlainString() else null
             val t = uuid()
@@ -145,9 +200,13 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         existing(requestId)?.let { return it }
         return write {
             val acc = account(accountId)
+            if (countedMinor < 0 && !acc.allowNegative) throw LedgerException("العدّ لا يكون سالباً لحساب لا يسمح بالسالب")
+            if (kotlin.math.abs(countedMinor) > MoneyPolicy.MAX_MINOR) throw LedgerException("المبلغ أكبر من الحد المسموح")
+            existing(requestId)?.let { return@write it }
             val cur = Balances.balance(acc, dao.entries().map { it.toDomain() }, date)
-            val diff = countedMinor - cur.minor
+            val diff = Math.subtractExact(countedMinor, cur.minor)
             if (diff == 0L) return@write null
+            guardNegative(acc, diff, date)
             val t = uuid()
             dao.insertTxn(TxnEntity(t, TxnType.ADJUSTMENT.name, date.toString(), "تسوية بعد العدّ (فرق ${Fmt.money(Money(diff, acc.currency), false)})", "", requestId, createdAtUtc = clock(), updatedAtUtc = clock()))
             dao.insertEntries(listOf(EntryEntity(uuid(), t, acc.id, EntryKind.ADJUSTMENT.name, diff, acc.currency.code, date.toString())))
@@ -162,7 +221,8 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
      */
     suspend fun addDebt(party: String, direction: DebtDirection, principalMinor: Long, currency: CurrencyDef, date: LocalDate, due: LocalDate?, installments: List<Pair<LocalDate, Long>>, note: String, cashAccountId: String?, cashMinor: Long?, requestId: String): String {
         if (party.isBlank()) throw LedgerException("اسم الطرف مطلوب")
-        if (principalMinor <= 0) throw LedgerException("أصل الدين يجب أن يكون أكبر من صفر")
+        checkAmount(principalMinor, "أصل الدين")
+        if (cashMinor != null) checkAmount(cashMinor, "مبلغ الحساب")
         if (installments.isNotEmpty() && installments.sumOf { it.second } != principalMinor) throw LedgerException("مجموع الأقساط يجب أن يساوي أصل الدين")
         existing(requestId)?.let { t -> return dao.txn(t)?.debtId ?: t }
         return write {
@@ -199,7 +259,8 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         return write {
             existing(requestId)?.let { return@write it }
             val de = dao.debts().firstOrNull { it.id == debtId } ?: throw LedgerException("الدين غير موجود")
-            val debt = de.toDomain(dao.installments())
+            if (walletMinor != null) checkAmount(walletMinor, "مبلغ الحساب")
+            val debt = de.toDomain(dao.installments(), cancelledDebts())
             val pays = dao.debtPayments().filter { it.debtId == debtId }.map { it.toDomain(debt.currency) }
             when (val v = DebtCalc.validatePayment(debt, pays, Money(debtMinor, debt.currency))) {
                 is DebtCalc.Validation.Rejected -> throw LedgerException(v.reason)
@@ -239,12 +300,15 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
     suspend fun goldTrade(holdingId: String, buy: Boolean, grams: BigDecimal, accountId: String?, cashMinor: Long?, date: LocalDate, note: String, requestId: String): String {
         existing(requestId)?.let { return it }
         if (grams.signum() <= 0) throw LedgerException("الوزن يجب أن يكون أكبر من صفر")
+        if (cashMinor != null && cashMinor < 0) throw LedgerException("المبلغ لا يكون سالباً")
+        if (cashMinor != null && cashMinor > 0) checkAmount(cashMinor)
         return write {
             existing(requestId)?.let { return@write it }
             val h = dao.goldHoldings().firstOrNull { it.id == holdingId } ?: throw LedgerException("القطعة غير موجودة")
             if (!buy) {
                 val have = GoldCalc.grams(h.toDomain(), dao.goldMoves().map { it.toDomain() }, date)
                 if (grams > have) throw LedgerException("الوزن المباع أكبر من الرصيد (${Fmt.plain(have)}غ)")
+                guardGold(h.id, emptySet(), listOf(date to grams.negate()))
             }
             val t = uuid()
             dao.insertTxn(TxnEntity(t, (if (buy) TxnType.GOLD_BUY else TxnType.GOLD_SELL).name, date.toString(), note.ifBlank { "${if (buy) "شراء" else "بيع"} ${Fmt.plain(grams)}غ ${h.name}" }, "", requestId, createdAtUtc = clock(), updatedAtUtc = clock()))
@@ -269,10 +333,18 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
             val t = dao.txn(txnId) ?: throw LedgerException("الحركة غير موجودة")
             if (t.reversedById != null) throw LedgerException("الحركة معكوسة مسبقاً")
             if (t.reversesId != null) throw LedgerException("لا يمكن عكس حركة عكس")
+            if (t.type == TxnType.DEBT_NEW.name && t.debtId != null) {
+                // إلغاء الدين: لا يُقبل وعليه دفعات حيّة (صافيها غير صفر) — تُعكس الدفعات أولاً
+                val net = dao.debtPayments().filter { it.debtId == t.debtId }.sumOf { it.debtAmountMinor }
+                if (net != 0L) throw LedgerException("على هذا الدين دفعات مسجّلة؛ اعكس الدفعات أولاً ثم ألغِ الدين")
+            }
+            val es0 = dao.entriesOf(t.id)
+            es0.groupBy { it.accountId }.forEach { (accId, l) -> guardPath(account(accId), emptySet(), l.map { LocalDate.parse(it.date) to -it.amountMinor }) }
+            dao.goldMovesOfTxn(t.id).groupBy { it.holdingId }.forEach { (h, l) -> guardGold(h, emptySet(), l.map { LocalDate.parse(it.date) to BigDecimal(it.grams).negate() }) }
             val r = uuid()
             dao.insertTxn(TxnEntity(r, TxnType.REVERSAL.name, t.date, // بتاريخ الأصل حتى تتعادل تقارير الفترة
                 "عكس: ${t.note}".take(200) + if (reason.isNotBlank()) " — $reason" else "", t.party, requestId, debtId = t.debtId, reversesId = t.id, createdAtUtc = clock(), updatedAtUtc = clock()))
-            dao.insertEntries(dao.entriesOf(t.id).map { it.copy(id = uuid(), txnId = r, amountMinor = -it.amountMinor) })
+            dao.insertEntries(es0.map { it.copy(id = uuid(), txnId = r, amountMinor = -it.amountMinor) })
             dao.paymentsOfTxn(t.id).forEach { p -> dao.insertDebtPayment(p.copy(id = uuid(), txnId = r, debtAmountMinor = -p.debtAmountMinor, walletAmountMinor = p.walletAmountMinor?.let { -it })) }
             dao.goldMovesOfTxn(t.id).forEach { m -> dao.insertGoldMove(m.copy(id = uuid(), txnId = r, type = GoldMoveType.ADJUST.name, grams = BigDecimal(m.grams).negate().toPlainString())) }
             dao.zakatPaymentsOfTxn(t.id).forEach { z -> dao.insertZakatPayment(z.copy(id = uuid(), txnId = r, amountMinor = -z.amountMinor, usd = BigDecimal(z.usd).negate().toPlainString())) }
@@ -282,14 +354,28 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         }
     }
 
-    /** تراجع سريع عن حركة جديدة (خلال 10 دقائق ولا يرتبط بها جرد معتمد): حذف كامل مع تسجيله. */
+    /**
+     * تراجع سريع عن حركة جديدة: حذف كامل مع تسجيله، فقط إن:
+     * لم تمضِ 10 دقائق (ووقت إنشائها ليس في المستقبل — تغيّر الساعة يمنع التراجع)، وليست حركة عكس ولا معكوسة،
+     * ولا دفعة زكاة، ولا يغطيها جرد معتمد أُنشئ بعدها، ولا يعتمد عليها رصيد أو وزن لاحق، ولا دين عليه دفعات.
+     * غير ذلك يُصحَّح بـ«عكس الحركة».
+     */
     suspend fun undoRecent(txnId: String) = write {
         val t = dao.txn(txnId) ?: return@write
-        if (clock() - t.createdAtUtc > 10 * 60_000) throw LedgerException("انتهت مهلة التراجع السريع؛ استخدم «عكس الحركة»")
+        val age = clock() - t.createdAtUtc
+        if (age < 0 || age > UNDO_WINDOW_MS) throw LedgerException("انتهت مهلة التراجع السريع؛ استخدم «عكس الحركة»")
+        if (t.reversedById != null || t.reversesId != null) throw LedgerException("حركة معكوسة أو حركة عكس لا تُحذف؛ السجل يبقى كما هو")
         if (dao.zakatPaymentsOfTxn(txnId).isNotEmpty()) throw LedgerException("دفعة زكاة: استخدم «عكس الحركة»")
+        if (dao.inventories().any { it.status == "FINAL" && !LocalDate.parse(it.date).isBefore(LocalDate.parse(t.date)) && it.createdAtUtc >= t.createdAtUtc })
+            throw LedgerException("اعتُمد جرد يشمل هذه الحركة؛ استخدم «عكس الحركة»")
+        val debtToDelete = t.debtId?.takeIf { t.type == TxnType.DEBT_NEW.name }
+        if (debtToDelete != null && dao.debtPayments().any { it.debtId == debtToDelete }) throw LedgerException("على هذا الدين دفعات؛ استخدم «عكس الحركة» بعد عكس الدفعات")
+        val es = dao.entriesOf(txnId)
+        es.groupBy { it.accountId }.forEach { (accId, l) -> guardPath(account(accId), l.map { it.id }.toSet(), emptyList()) }
+        dao.goldMovesOfTxn(txnId).groupBy { it.holdingId }.forEach { (h, l) -> guardGold(h, l.map { it.id }.toSet(), emptyList()) }
         dao.deleteTxn(txnId) // القيود والدفعات وحركات الوزن تُحذف بالتتابع (CASCADE)
-        t.debtId?.let { d -> if (t.type == TxnType.DEBT_NEW.name) dao.debts().firstOrNull { it.id == d }?.let { if (dao.debtPayments().none { p -> p.debtId == d }) db.openHelper.writableDatabase.execSQL("DELETE FROM debts WHERE id = ?", arrayOf(d)) } }
-        audit("txn", txnId, "undo", "${t.type} ${t.date} ${t.note}")
+        if (debtToDelete != null) db.openHelper.writableDatabase.execSQL("DELETE FROM debts WHERE id = ?", arrayOf(debtToDelete))
+        audit("txn", txnId, "undo", "${t.type} ${t.date}")
     }
 
     /**
@@ -300,11 +386,13 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         val t = dao.txn(txnId) ?: throw LedgerException("الحركة غير موجودة")
         if (t.type != TxnType.INCOME.name && t.type != TxnType.EXPENSE.name) throw LedgerException("هذه الحركة تُصحَّح بالعكس")
         if (t.reversedById != null) throw LedgerException("الحركة معكوسة")
+        checkAmount(amountMinor)
         val es = dao.entriesOf(txnId)
         val e = es.single()
         val signed = if (t.type == TxnType.INCOME.name) amountMinor else -amountMinor
         val acc = account(e.accountId)
-        guardNegative(acc, signed - e.amountMinor, date)
+        // المسار كاملاً: بلا القيد القديم في تاريخه ومع الجديد في تاريخه الجديد
+        guardPath(acc, setOf(e.id), listOf(date to signed))
         val inInventory = dao.inventories().any { it.status == "FINAL" && !LocalDate.parse(it.date).isBefore(LocalDate.parse(t.date).coerceAtMost(date)) }
         audit("txn", txnId, "edit", "old=${e.amountMinor} ${t.date} cat=${e.categoryId} note=${t.note}; new=$signed $date cat=$categoryId" + if (inInventory) "; يمسّ جرداً معتمداً" else "")
         dao.updateEntries(listOf(e.copy(amountMinor = signed, date = date.toString(), categoryId = categoryId)))

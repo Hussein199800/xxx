@@ -43,8 +43,10 @@ data class PricedLine(
     val note: String? = null,
 ) {
     val counts get() = usd != null
-    /** القيمة الموقّعة: الالتزامات بالسالب. */
-    val signedUsd: BigDecimal? get() = usd?.let { if (item.kind.isLiability) it.negate() else it }
+    /** البند ينقص الصافي: التزام، أو نقد رصيده سالب. الإشارة تُحدَّد مرة واحدة هنا فقط. */
+    val reducesNet: Boolean get() = item.kind.isLiability || (item.kind == LineKind.CASH && item.quantity.signum() < 0)
+    /** القيمة الموقّعة: الالتزامات والنقد السالب بالسالب ([usd] يبقى مطلقاً للتسعير). */
+    val signedUsd: BigDecimal? get() = usd?.let { if (reducesNet) it.negate() else it }
 }
 
 data class InventoryResult(
@@ -53,7 +55,8 @@ data class InventoryResult(
 ) {
     val missingCount get() = lines.count { !it.counts }
     val isComplete get() = missingCount == 0
-    fun total(kind: LineKind): BigDecimal = lines.filter { it.item.kind == kind && it.counts }.fold(BigDecimal.ZERO) { a, l -> a + l.usd!! }
+    /** مجموع نوع بالإشارة (النقد بعد طرح السالب منه، والالتزامات بالسالب). */
+    fun total(kind: LineKind): BigDecimal = lines.filter { it.item.kind == kind && it.counts }.fold(BigDecimal.ZERO) { a, l -> a + l.signedUsd!! }
     /** صافي البنود المسعّرة: الموجودات − الالتزامات (الإجمالي الجزئي عند النقص). */
     val pricedNet: BigDecimal get() = lines.filter { it.counts }.fold(BigDecimal.ZERO) { a, l -> a + l.signedUsd!! }
 

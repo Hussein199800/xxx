@@ -32,6 +32,11 @@ object PartyLedger {
             val sign = if (d.direction == DebtDirection.OWED_TO_ME) 1 else -1
             val principalTxn = txns.firstOrNull { it.debtId == d.id && it.type == TxnType.DEBT_NEW.name }
             out += Move(d.date, Money(sign * d.principal.minor, d.currency), d.note?.ifBlank { null } ?: if (sign > 0) "دين لي" else "دين عليّ", principalTxn?.id, principalTxn?.createdAtUtc ?: 0)
+            // دين ملغى: يبقى الأصل في الكشف ويقابله سطر «إلغاء» بحركة العكس نفسها (الرصيد صفر)
+            if (d.cancelled) {
+                val rv = principalTxn?.reversedById?.let { v.txnById[it] }
+                out += Move(rv?.date?.let(LocalDate::parse) ?: d.date, Money(-sign * d.principal.minor, d.currency), "إلغاء الدين (عكس)", rv?.id, rv?.createdAtUtc ?: (principalTxn?.createdAtUtc ?: 0) + 1)
+            }
             v.s.debtPayments.filter { it.debtId == d.id }.forEach { p ->
                 val t = p.txnId?.let { v.txnById[it] }
                 val note = t?.note?.ifBlank { null } ?: if (sign > 0) "تحصيل" else "سداد"

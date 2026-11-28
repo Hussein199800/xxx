@@ -73,9 +73,11 @@ fun TxnDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
         Spacer(Modifier.height(Sp.xs))
         if ((type == TxnType.INCOME || type == TxnType.EXPENSE) && t.reversedById == null)
             SoftButton("تعديل", { nav.navigate(Routes.add(if (type == TxnType.INCOME) "income" else "expense", id)) }, Modifier.fillMaxWidth(), icon = Icons.Filled.Edit)
-        if (t.reversedById == null && t.reversesId == null && es.isNotEmpty()) {
+        val isDebtNew = type == TxnType.DEBT_NEW && t.debtId != null
+        // الدين القديم بلا حركة نقدية يُلغى أيضاً بعكس حركة إنشائه
+        if (t.reversedById == null && t.reversesId == null && (es.isNotEmpty() || isDebtNew)) {
             Spacer(Modifier.height(Sp.xs))
-            OutlinedButton(onClick = { confirmReverse = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Icon(Icons.Filled.Undo, null); Spacer(Modifier.width(6.dp)); Text("عكس الحركة") }
+            OutlinedButton(onClick = { confirmReverse = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Icon(Icons.Filled.Undo, null); Spacer(Modifier.width(6.dp)); Text(if (isDebtNew) "إلغاء الدين (عكس)" else "عكس الحركة") }
         }
         if (voucher) {
             Spacer(Modifier.height(Sp.sm))
@@ -87,7 +89,8 @@ fun TxnDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
     if (confirmReverse) AlertDialog(onDismissRequest = { confirmReverse = false },
         title = { Text("عكس الحركة؟") },
         text = { Column {
-            Text("ستُنشأ حركة عكس بنفس التاريخ تعيد أرصدة الحسابات" + (if (t.debtId != null) " والدين" else "") + " معاً، ويبقى الأصل في السجل.")
+            Text(if (type == TxnType.DEBT_NEW) "سيُلغى الدين: لا يُحتسب أصله بعد الآن، وتُعاد أي مبالغ نقدية لحساباتها، ويبقى الدين وحركته في السجل. إن كانت عليه دفعات فاعكسها أولاً."
+                else "ستُنشأ حركة عكس بنفس التاريخ تعيد أرصدة الحسابات" + (if (t.debtId != null) " والدين" else "") + " معاً، ويبقى الأصل في السجل.")
             es.forEach { e -> Text("• ${view.accountById[e.accountId]?.name}: ${Fmt.money(-e.amount)}", color = c.mute) }
             TextIn(reason, { reason = it }, "السبب (اختياري)")
         } },
@@ -114,7 +117,7 @@ fun DebtDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
                     Text("المتبقي", color = c.mute, style = MaterialTheme.typography.labelLarge)
                     AmountText(r.remaining, style = MaterialTheme.typography.headlineMedium, color = if (d.direction == DebtDirection.I_OWE) c.danger else c.pri)
                 }
-                StatusChip(r.status.ar, when (r.status) { DebtStatus.SETTLED -> Tone.OK; DebtStatus.OVERDUE -> Tone.DANGER; DebtStatus.PARTIAL -> Tone.GOLD; DebtStatus.OPEN -> Tone.INFO })
+                StatusChip(r.status.ar, when (r.status) { DebtStatus.SETTLED -> Tone.OK; DebtStatus.OVERDUE -> Tone.DANGER; DebtStatus.PARTIAL -> Tone.GOLD; DebtStatus.OPEN -> Tone.INFO; DebtStatus.CANCELLED -> Tone.INFO })
             }
             KeyValue("أصل الدين", Fmt.money(d.principal))
             KeyValue("المدفوع", Fmt.money(r.paid))
@@ -124,6 +127,7 @@ fun DebtDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
             if (!d.note.isNullOrBlank()) KeyValue("ملاحظة", d.note!!)
         }
         Spacer(Modifier.height(Sp.sm))
+        if (d.cancelled) Text("هذا الدين ملغى (عُكست حركة إنشائه)؛ يبقى في السجل ولا يُحتسب.", color = c.mute)
         if (r.remaining.minor > 0) PrimaryButton(if (d.direction == DebtDirection.I_OWE) "سجّل دفعة سداد" else "سجّل دفعة تحصيل", { nav.navigate(Routes.add("payment", id)) }, Modifier.fillMaxWidth(), icon = Icons.Filled.TaskAlt)
         if (d.installments.isNotEmpty()) {
             SectionHeader("جدول الأقساط")
@@ -158,6 +162,9 @@ fun DebtDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
         }
         Spacer(Modifier.height(Sp.sm))
         SoftButton("كشف حساب ${d.party}", { nav.navigate(Routes.party(d.party)) }, Modifier.fillMaxWidth(), icon = Icons.Filled.ReceiptLong)
+        view.s.txns.firstOrNull { it.debtId == id && it.type == TxnType.DEBT_NEW.name }?.let { nt ->
+            TextButton(onClick = { nav.navigate(Routes.txn(nt.id)) }, modifier = Modifier.fillMaxWidth()) { Text(if (d.cancelled) "حركة الإنشاء والإلغاء" else "حركة إنشاء الدين (للتصحيح أو الإلغاء)") }
+        }
         Spacer(Modifier.height(Sp.xs))
         SoftButton("تصدير كشف الدين", { export = !export }, Modifier.fillMaxWidth(), icon = Icons.Filled.IosShare)
         if (export) {
