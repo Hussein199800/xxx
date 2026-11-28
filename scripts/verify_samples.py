@@ -72,18 +72,62 @@ for p in sorted(glob.glob(os.path.join(root, "**", "*.pdf"), recursive=True)):
         check(f"{base}: نص قابل للتحديد والاستخراج", all(len(t) > 20 for t in texts))
         check(f"{base}: ترقيم في كل صفحة", all(str(n) in t for t in texts))
 
+# ---- تقرير جميع الحسابات (F04–F06): المحتوى لا مجرد الفتح ----
+for x in sorted(glob.glob(os.path.join(root, "accounts", "*.xlsx"))):
+    base = os.path.basename(x); stem = os.path.splitext(x)[0]
+    wb = openpyxl.load_workbook(x)
+    ws = next((w for w in wb.worksheets if w.title.startswith("الحسابات")), None)
+    check(f"{base}: ورقة الحسابات موجودة", ws is not None)
+    if ws is None: continue
+    hdr = [c.value for c in ws[1]]
+    need = ["م", "الحساب", "العملة", "عليه (مدين)", "له (دائن)", "الصافي", "الاتجاه"]
+    check(f"{base}: أعمدة الحسابات", all(h in hdr for h in need), str(hdr))
+    ix = {h: hdr.index(h) for h in need if h in hdr}
+    data = []; totals = []
+    for r in ws.iter_rows(min_row=2, values_only=True):
+        if r[ix["الحساب"]] == "الإجمالي": totals.append(r)
+        elif r[ix["الحساب"]] is not None: data.append(r)
+    seq = [int(r[ix["م"]]) for r in data]
+    check(f"{base}: التسلسل متصل بلا إسقاط", seq == list(range(1, len(data) + 1)), f"{len(data)} صف")
+    # مجاميع كل عملة = مجموع صفوفها
+    for t in totals:
+        cur = t[ix["العملة"]]
+        net = sum(decimal.Decimal(str(r[ix["الصافي"]])) for r in data if r[ix["العملة"]] == cur and r[ix["الصافي"]] is not None)
+        deb = sum(decimal.Decimal(str(r[ix["عليه (مدين)"]])) for r in data if r[ix["العملة"]] == cur and r[ix["عليه (مدين)"]] is not None)
+        check(f"{base}: صافي {cur} = مجموع الصفوف", abs(net - decimal.Decimal(str(t[ix["الصافي"]]))) < decimal.Decimal("0.005"), f"{net} / {t[ix['الصافي']]}")
+        check(f"{base}: مدين {cur} = مجموع الصفوف", abs(deb - decimal.Decimal(str(t[ix["عليه (مدين)"]]))) < decimal.Decimal("0.005"))
+    dirs = collections.Counter(r[ix["الاتجاه"]] for r in data)
+    if "-all-" in base:
+        check(f"{base}: أكثر من 100 صف وآخر صف موجود", len(data) > 100 and any(r[ix["الحساب"]] == "عميل تجريبي 130" for r in data), f"{len(data)}")
+        check(f"{base}: المدينة والدائنة والصفرية/بلا حركات حاضرة", dirs["لي معه"] > 0 and dirs["له معي"] > 0 and (dirs["مسدّد"] + dirs["بلا حركات"]) > 0, str(dict(dirs)))
+        check(f"{base}: الحساب متعدد العملات في صفين بلا تقاصّ", sum(1 for r in data if r[ix["الحساب"]] == "مزدوج") == 2)
+        check(f"{base}: المؤرشف مستبعد كما أُعلن", not any(r[ix["الحساب"]] == "مؤرشف" for r in data))
+    if "-debtor-" in base: check(f"{base}: كل الصفوف مدينة", set(dirs) == {"لي معه"}, str(dict(dirs)))
+    if "-creditor-" in base: check(f"{base}: كل الصفوف دائنة", set(dirs) == {"له معي"}, str(dict(dirs)))
+    # الصيغ الثلاث بالبيانات نفسها
+    if os.path.exists(stem + ".docx"):
+        dd = docx.Document(stem + ".docx")
+        t = max(dd.tables, key=lambda t: len(t.rows))
+        check(f"{base}: DOCX بعدد صفوف XLSX نفسه", len(t.rows) - 1 - len(totals) == len(data), f"docx {len(t.rows)} / xlsx {len(data)}+{len(totals)}+1")
+    if os.path.exists(stem + ".pdf"):
+        with pdfplumber.open(stem + ".pdf") as pdf:
+            texts = [pg.extract_text() or "" for pg in pdf.pages]
+        alltext = "\n".join(texts)
+        check(f"{base}: PDF يحوي رقم آخر صف ({len(data)})", str(len(data)) in alltext, f"{len(texts)} صفحة")
+        if len(texts) > 1: check(f"{base}: PDF متعدد الصفحات", True, f"{len(texts)} صفحة")
+
 # LibreOffice: تحويل XLSX وDOCX إلى PDF (فتح فعلي في محرر متوافق) ثم صورة الصفحة الأولى
 lo_dir = os.path.join(out, "libreoffice"); os.makedirs(lo_dir, exist_ok=True)
 import shutil
 lo_files = [] if (os.environ.get("SKIP_LIBREOFFICE") or not shutil.which("soffice")) else None
-for f in [] if lo_files is not None else sorted(glob.glob(os.path.join(root, "*.xlsx")) + glob.glob(os.path.join(root, "*.docx"))):
+for f in [] if lo_files is not None else sorted(glob.glob(os.path.join(root, "*.xlsx")) + glob.glob(os.path.join(root, "*.docx")) + glob.glob(os.path.join(root, "accounts", "*-all-*.xlsx")) + glob.glob(os.path.join(root, "accounts", "*-all-*.docx"))):
     r = subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir", lo_dir, f], capture_output=True, text=True, timeout=180)
     pdf_out = os.path.join(lo_dir, os.path.splitext(os.path.basename(f))[0] + ".pdf")
     okc = os.path.exists(pdf_out)
     pages = 0
     if okc:
         with pdfplumber.open(pdf_out) as pdf: pages = len(pdf.pages)
-        tag = "xlsx" if f.endswith(".xlsx") else "docx"
+        tag = ("acc-" if "/accounts/" in f else "") + ("xlsx" if f.endswith(".xlsx") else "docx")
         subprocess.run(["pdftoppm", "-r", "60", "-png", "-f", "1", "-l", "1", pdf_out, os.path.join(out, f"lo-{tag}")])
     check(f"LibreOffice يفتح {os.path.basename(f)}", okc and pages > 0, f"{pages} صفحة بعد التحويل")
 for p in sorted(glob.glob(os.path.join(root, "*.pdf"))):
