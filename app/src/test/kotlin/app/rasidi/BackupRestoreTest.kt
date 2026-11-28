@@ -48,9 +48,13 @@ class BackupRestoreTest {
         // دخل لاحق يغطي الدفع بالليرة السورية (الدفعات بعد تاريخ الجرد وبأسعاره نفسها)
         val pd = d.plusDays(1)
         repo.addIncomeExpense(true, sy, 5_000_00, "cat-gift", pd, "", "", "inc-syp")
+        // سعر يوم الدفع (قاعدة المشروع): القيم نفسها مسجّلة بتاريخ الدفعة
+        repo.addRate("TRY", BigDecimal(40), RateDirection.UNITS_PER_USD, pd, "صرّاف", RateKind.LOCAL)
+        repo.addRate("SYP", BigDecimal(120), RateDirection.UNITS_PER_USD, pd, "صرّاف", RateKind.LOCAL)
+        val pr = repo.view().rates
         repo.addZakatPayment(est, usd, 120_00, RateBook.USD_IDENTITY.copy(date = pd), pd, "جمعية", "z1")
-        repo.addZakatPayment(est, tl, 2_000_00, v.rates.first { it.unit == "TRY" }, pd, "", "z2")
-        repo.addZakatPayment(est, sy, 14_100_00, v.rates.first { it.unit == "SYP" }, pd, "", "z3")
+        repo.addZakatPayment(est, tl, 2_000_00, pr.first { it.unit == "TRY" && it.date == pd }, pd, "", "z2")
+        repo.addZakatPayment(est, sy, 14_100_00, pr.first { it.unit == "SYP" && it.date == pd }, pd, "", "z3")
         val paid = repo.snapshot().zakatPayments.fold(BigDecimal.ZERO) { a, p -> a + BigDecimal(p.usd) }
         assertEquals("المتبقي 0.00", Distribution.Progress(BigDecimal("287.50"), BigDecimal.ZERO, paid).remainingLabel)
         repo.addDebtPayment(recv, 100_00, usd, null, d, "", "rp")

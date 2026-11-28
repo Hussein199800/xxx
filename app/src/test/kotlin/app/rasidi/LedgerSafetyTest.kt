@@ -49,7 +49,7 @@ class LedgerSafetyTest {
             // السجل محفوظ: الدين والحركتان
             assertEquals(1, r.snapshot().debts.size)
             // طلب مكرر لا يعكس مرتين
-            assertEquals(r.reverse(newTxnOf(r, debt), "", "rev-$dir"), r.snapshot().txns.single { it.reversesId == newTxnOf(r, debt) }.id)
+            assertEquals(r.reverse(newTxnOf(r, debt), "خطأ", "rev-$dir"), r.snapshot().txns.single { it.reversesId == newTxnOf(r, debt) }.id)
         }
     }
 

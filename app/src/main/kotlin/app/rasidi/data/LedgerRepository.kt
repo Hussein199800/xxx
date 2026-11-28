@@ -9,6 +9,7 @@ import app.rasidi.core.valuation.InventoryResult
 import app.rasidi.core.zakat.ZakatResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.UUID
@@ -21,7 +22,10 @@ class LedgerException(message: String) : Exception(message)
  * [requestId] يمنع حفظ الضغط المكرر: إعادة الطلب نفسه تعيد الحركة الموجودة دون تكرار.
  */
 class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = System::currentTimeMillis, private val onWrite: () -> Unit = {}) {
-    companion object { const val UNDO_WINDOW_MS = 10 * 60_000L }
+    companion object {
+        const val UNDO_WINDOW_MS = 10 * 60_000L
+        val MAX_GRAMS = BigDecimal(1_000_000)
+    }
     private val dao = db.dao()
     private val _version = MutableStateFlow(0L)
     /** يزداد مع كل كتابة ناجحة؛ تراقبه الواجهة والنسخ التلقائي. */
@@ -31,10 +35,53 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
 
     private suspend fun <T> write(block: suspend () -> T): T {
         val r = db.withTransaction { block() }
-        _version.value = _version.value + 1
-        onWrite()
+        committed()
         return r
     }
+
+    /** بعد الالتزام: إشعار الواجهة والنسخ. فشل الأثر الجانبي لا يجعل العملية الملتزمة تبدو فاشلة. */
+    private fun committed() {
+        _version.update { it + 1 }
+        runCatching { onWrite() }
+    }
+
+    private val reqDao = db.requests()
+
+    private fun sha256(s: String) = java.security.MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+    class RequestConflictException(message: String) : Exception(message)
+
+    /**
+     * عقد منع التكرار الموحّد: [requestId] ثابت لكل نية حفظ.
+     * - الطلب يُفحص داخل المعاملة قبل أي أثر، ويُسجَّل مع نوع العملية وبصمة مدخلاتها ونتيجتها في المعاملة نفسها.
+     * - إعادة الطلب نفسه (ولو بعد إعادة التشغيل أو بالتزامن) تعيد النتيجة السابقة دون أي كتابة.
+     * - المعرّف نفسه بعملية أو مدخلات مختلفة يُرفض صراحةً ولا يُعاد نجاح عملية أخرى.
+     * - العملية التي لا تُحدث أثراً (مثل عدّ يساوي الرصيد) تُسجَّل نتيجتها null، فلا يُعاد تفسير الطلب لاحقاً.
+     */
+    private suspend fun once(requestId: String, op: String, payload: String, block: suspend () -> String?): String? {
+        if (requestId.isBlank()) throw LedgerException("رقم الطلب مفقود")
+        val hash = sha256("$op\n$payload")
+        fun replay(prev: RequestEntity): String? {
+            if (prev.op != op || prev.payloadHash != hash) throw RequestConflictException("هذا الطلب استُخدم لعملية مختلفة؛ أعد فتح الشاشة وأعد المحاولة")
+            return prev.resultId
+        }
+        reqDao.get(requestId)?.let { return replay(it) }
+        val (fresh, result) = try {
+            db.withTransaction {
+                val prev = reqDao.get(requestId)
+                if (prev != null) false to replay(prev)
+                else { val r = block(); reqDao.insert(RequestEntity(requestId, op, hash, r, clock())); true to r }
+            }
+        } catch (e: android.database.sqlite.SQLiteConstraintException) {
+            // طلب متزامن بالمعرّف نفسه التزم قبلنا: نعيد نتيجته
+            val prev = reqDao.get(requestId) ?: throw e
+            false to replay(prev)
+        }
+        if (fresh) committed()
+        return result
+    }
+
+    private fun p(vararg parts: Any?) = parts.joinToString("\u001f") { it?.toString() ?: "\u0000" }
 
     private suspend fun audit(type: String, id: String, action: String, detail: String = "") =
         dao.insertAudit(AuditEntity(uuid(), clock(), type, id, action, detail))
@@ -64,8 +111,9 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         if (dao.categories().isEmpty()) write { app.rasidi.core.demo.DemoData.defaultCategories.forEach { dao.insertCategory(it) } }
     }
 
-    suspend fun createAccount(name: String, type: AccountType, currency: CurrencyDef, openingMinor: Long, openingDate: LocalDate, allowNegative: Boolean = false, requestId: String = uuid()): String = write {
-        require(name.isNotBlank()) { "اسم الحساب مطلوب" }
+    suspend fun createAccount(name: String, type: AccountType, currency: CurrencyDef, openingMinor: Long, openingDate: LocalDate, allowNegative: Boolean = false, requestId: String = uuid()): String = once(requestId, "createAccount", p(name.trim(), type, currency.code, openingMinor, openingDate, allowNegative)) {
+        if (name.isBlank()) throw LedgerException("اسم الحساب مطلوب")
+        dao.txnByRequest(requestId)?.let { t -> return@once dao.entriesOf(t.id).firstOrNull()?.accountId ?: throw RequestConflictException("هذا الطلب استُخدم لعملية مختلفة") }
         if (openingMinor < 0 && !allowNegative) throw LedgerException("الرصيد الافتتاحي سالب؛ فعّل «السماح بالسالب» لهذا الحساب أولاً")
         if (kotlin.math.abs(openingMinor) > MoneyPolicy.MAX_MINOR) throw LedgerException("الرصيد الافتتاحي أكبر من الحد المسموح")
         val id = uuid()
@@ -77,7 +125,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         }
         audit("account", id, "create", name)
         id
-    }
+    }!!
 
     suspend fun updateAccount(a: AccountEntity) = write { dao.updateAccount(a); audit("account", a.id, "update", a.name) }
 
@@ -148,10 +196,9 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
 
     /** دخل أو مصروف بسيط. يعيد معرّف الحركة. */
     suspend fun addIncomeExpense(income: Boolean, accountId: String, amountMinor: Long, categoryId: String?, date: LocalDate, note: String, party: String, requestId: String, memberId: String? = null): String {
-        existing(requestId)?.let { return it }
         checkAmount(amountMinor)
-        return write {
-            existing(requestId)?.let { return@write it }
+        return once(requestId, "incomeExpense", p(income, accountId, amountMinor, categoryId, date, note.trim(), party.trim(), memberId)) {
+            existing(requestId)?.let { return@once it }
             val acc = account(accountId)
             val signed = if (income) amountMinor else -amountMinor
             guardNegative(acc, signed, date)
@@ -159,7 +206,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
             dao.insertTxn(TxnEntity(t, (if (income) TxnType.INCOME else TxnType.EXPENSE).name, date.toString(), note.trim(), party.trim(), requestId, createdAtUtc = clock(), updatedAtUtc = clock(), memberId = memberId))
             dao.insertEntries(listOf(EntryEntity(uuid(), t, acc.id, (if (income) EntryKind.INCOME else EntryKind.EXPENSE).name, signed, acc.currency.code, date.toString(), categoryId)))
             t
-        }
+        }!!
     }
 
     /**
@@ -167,14 +214,13 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
      * التحويل الداخلي لا يدخل في الدخل والمصروف.
      */
     suspend fun transfer(fromId: String, toId: String, fromMinor: Long, toMinor: Long, feeMinor: Long, feeAccountId: String?, date: LocalDate, note: String, requestId: String): String {
-        existing(requestId)?.let { return it }
         if (fromId == toId) throw LedgerException("اختر حسابين مختلفين")
         if (fromMinor <= 0 || toMinor <= 0) throw LedgerException("أدخل المبلغين")
         checkAmount(fromMinor); checkAmount(toMinor)
         if (feeMinor < 0) throw LedgerException("الرسوم لا تكون سالبة")
         if (feeMinor > 0) checkAmount(feeMinor, "الرسوم")
-        return write {
-            existing(requestId)?.let { return@write it }
+        return once(requestId, "transfer", p(fromId, toId, fromMinor, toMinor, feeMinor, feeAccountId, date, note.trim())) {
+            existing(requestId)?.let { return@once it }
             val from = account(fromId); val to = account(toId)
             if (from.currency.code == to.currency.code && fromMinor != toMinor) throw LedgerException("نفس العملة: المبلغان يجب أن يتساويا")
             val feeAcc = feeAccountId?.let { account(it) } ?: from
@@ -192,20 +238,19 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
             if (feeMinor > 0) es += EntryEntity(uuid(), t, feeAcc.id, EntryKind.FEE.name, -feeMinor, feeAcc.currency.code, date.toString(), "cat-fees".takeIf { dao.categories().any { c -> c.id == it } })
             dao.insertEntries(es)
             t
-        }
+        }!!
     }
 
     /** تسوية بعد العدّ اليدوي: قيد مستقل بالفرق عند تأكيد المستخدم. */
     suspend fun adjustToCount(accountId: String, countedMinor: Long, date: LocalDate, requestId: String): String? {
-        existing(requestId)?.let { return it }
-        return write {
+        return once(requestId, "adjustToCount", p(accountId, countedMinor, date)) {
             val acc = account(accountId)
             if (countedMinor < 0 && !acc.allowNegative) throw LedgerException("العدّ لا يكون سالباً لحساب لا يسمح بالسالب")
             if (kotlin.math.abs(countedMinor) > MoneyPolicy.MAX_MINOR) throw LedgerException("المبلغ أكبر من الحد المسموح")
-            existing(requestId)?.let { return@write it }
+            existing(requestId)?.let { return@once it }
             val cur = Balances.balance(acc, dao.entries().map { it.toDomain() }, date)
             val diff = Math.subtractExact(countedMinor, cur.minor)
-            if (diff == 0L) return@write null
+            if (diff == 0L) return@once null
             guardNegative(acc, diff, date)
             val t = uuid()
             dao.insertTxn(TxnEntity(t, TxnType.ADJUSTMENT.name, date.toString(), "تسوية بعد العدّ (فرق ${Fmt.money(Money(diff, acc.currency), false)})", "", requestId, createdAtUtc = clock(), updatedAtUtc = clock()))
@@ -219,13 +264,28 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
     /**
      * دين جديد. [cashAccountId] = null لدين قديم بلا حركة نقدية؛ وإلا يُربط قرض نقدي جديد بحركة حساب.
      */
-    suspend fun addDebt(party: String, direction: DebtDirection, principalMinor: Long, currency: CurrencyDef, date: LocalDate, due: LocalDate?, installments: List<Pair<LocalDate, Long>>, note: String, cashAccountId: String?, cashMinor: Long?, requestId: String): String {
+    suspend fun addDebt(party: String, direction: DebtDirection, principalMinor: Long, currency: CurrencyDef, date: LocalDate, due: LocalDate?, installments: List<Pair<LocalDate, Long>>, note: String, cashAccountId: String?, cashMinor: Long?, requestId: String): String =
+        once(requestId, "addDebt", p(app.rasidi.core.backup.PartyIds.normalize(party), direction, principalMinor, currency.code, date, due, installments.joinToString(";") { "${it.first}=${it.second}" }, note.trim(), cashAccountId, cashMinor)) {
+            dao.txnByRequest(requestId)?.let { t -> return@once t.debtId ?: t.id }
+            addDebtTx(party, direction, principalMinor, currency, date, due, installments, note, cashAccountId, cashMinor, requestId)
+        }!!
+
+    private fun validateDebt(party: String, principalMinor: Long, cashMinor: Long?, date: LocalDate, due: LocalDate?, installments: List<Pair<LocalDate, Long>>) {
         if (party.isBlank()) throw LedgerException("اسم الطرف مطلوب")
         checkAmount(principalMinor, "أصل الدين")
         if (cashMinor != null) checkAmount(cashMinor, "مبلغ الحساب")
-        if (installments.isNotEmpty() && installments.sumOf { it.second } != principalMinor) throw LedgerException("مجموع الأقساط يجب أن يساوي أصل الدين")
-        existing(requestId)?.let { t -> return dao.txn(t)?.debtId ?: t }
-        return write {
+        if (due != null && due.isBefore(date)) throw LedgerException("تاريخ الاستحقاق قبل تاريخ الدين")
+        if (installments.isNotEmpty()) {
+            installments.forEach { (d, m) -> checkAmount(m, "القسط"); if (d.isBefore(date)) throw LedgerException("قسط بتاريخ قبل تاريخ الدين") }
+            val sum = installments.fold(java.math.BigInteger.ZERO) { a, i -> a + java.math.BigInteger.valueOf(i.second) }
+            if (sum != java.math.BigInteger.valueOf(principalMinor)) throw LedgerException("مجموع الأقساط يجب أن يساوي أصل الدين")
+        }
+    }
+
+    /** جسم إنشاء الدين — يُستدعى داخل معاملة قائمة فقط. */
+    private suspend fun addDebtTx(party: String, direction: DebtDirection, principalMinor: Long, currency: CurrencyDef, date: LocalDate, due: LocalDate?, installments: List<Pair<LocalDate, Long>>, note: String, cashAccountId: String?, cashMinor: Long?, requestId: String): String {
+        validateDebt(party, principalMinor, cashMinor, date, due, installments)
+        run {
             ensureParty(party)
             val id = uuid()
             var txnId: String? = null
@@ -245,8 +305,8 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
                 dao.insertTxn(TxnEntity(uuid(), TxnType.DEBT_NEW.name, date.toString(), "دين مسجّل دون حركة نقدية", party.trim(), requestId, debtId = id, createdAtUtc = clock(), updatedAtUtc = clock()))
             }
             if (installments.isNotEmpty()) dao.insertInstallments(installments.map { (d, m) -> InstallmentEntity(uuid(), id, d.toString(), m) })
-            audit("debt", id, "create", "$party $principalMinor ${currency.code}")
-            id
+            audit("debt", id, "create", "${currency.code}")
+            return id
         }
     }
 
@@ -255,12 +315,12 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
      * يحدّث الدين والحساب معاً في معاملة واحدة.
      */
     suspend fun addDebtPayment(debtId: String, debtMinor: Long, accountId: String?, walletMinor: Long?, date: LocalDate, note: String, requestId: String): String {
-        existing(requestId)?.let { return it }
-        return write {
-            existing(requestId)?.let { return@write it }
+        return once(requestId, "debtPayment", p(debtId, debtMinor, accountId, walletMinor, date, note.trim())) {
+            existing(requestId)?.let { return@once it }
             val de = dao.debts().firstOrNull { it.id == debtId } ?: throw LedgerException("الدين غير موجود")
             if (walletMinor != null) checkAmount(walletMinor, "مبلغ الحساب")
             val debt = de.toDomain(dao.installments(), cancelledDebts())
+            if (date.isBefore(debt.date)) throw LedgerException("تاريخ الدفعة قبل تاريخ الدين (${debt.date})")
             val pays = dao.debtPayments().filter { it.debtId == debtId }.map { it.toDomain(debt.currency) }
             when (val v = DebtCalc.validatePayment(debt, pays, Money(debtMinor, debt.currency))) {
                 is DebtCalc.Validation.Rejected -> throw LedgerException(v.reason)
@@ -279,14 +339,16 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
             }
             dao.insertDebtPayment(DebtPaymentEntity(uuid(), debtId, t, date.toString(), debtMinor, wMinor, wCur, accountId))
             t
-        }
+        }!!
     }
 
     suspend fun archiveDebt(d: DebtEntity, archived: Boolean) = write { dao.updateDebt(d.copy(archived = archived)); audit("debt", d.id, if (archived) "archive" else "unarchive") }
 
     // ---------------- الذهب ----------------
     suspend fun addGoldHolding(name: String, karat: Int, kind: GoldKind, openingGrams: BigDecimal, date: LocalDate, note: String = ""): String = write {
+        if (name.isBlank()) throw LedgerException("اسم القطعة مطلوب")
         if (karat !in 1..24) throw LedgerException("العيار بين 1 و24")
+        checkGrams(openingGrams, allowZero = true)
         val id = uuid()
         dao.insertGoldHolding(GoldHoldingEntity(id, name.trim(), karat, kind.name, note))
         if (openingGrams.signum() != 0) dao.insertGoldMove(GoldMoveEntity(uuid(), id, GoldMoveType.OPENING.name, openingGrams.toPlainString(), date.toString()))
@@ -297,13 +359,15 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
     /**
      * شراء أو بيع ذهب: النقد يتغير مرة واحدة (قيد واحد) والوزن يتغير بالكمية الفعلية (حركة وزن واحدة)، في معاملة واحدة.
      */
+    /**
+     * [accountId] = null: «بلا حركة نقدية» — وزن فقط ويُذكر ذلك في البيان. وإلا يلزم [cashMinor] موجب؛ لا يُتجاهل مبلغ فارغ أو صفر بصمت.
+     */
     suspend fun goldTrade(holdingId: String, buy: Boolean, grams: BigDecimal, accountId: String?, cashMinor: Long?, date: LocalDate, note: String, requestId: String): String {
-        existing(requestId)?.let { return it }
-        if (grams.signum() <= 0) throw LedgerException("الوزن يجب أن يكون أكبر من صفر")
-        if (cashMinor != null && cashMinor < 0) throw LedgerException("المبلغ لا يكون سالباً")
-        if (cashMinor != null && cashMinor > 0) checkAmount(cashMinor)
-        return write {
-            existing(requestId)?.let { return@write it }
+        checkGrams(grams)
+        if (accountId != null) { if (cashMinor == null) throw LedgerException("أدخل المبلغ المدفوع أو المقبوض، أو اختر «بلا حركة نقدية»"); checkAmount(cashMinor) }
+        else if (cashMinor != null) throw LedgerException("اختر الصندوق الذي دُفع منه المبلغ أو قُبض فيه")
+        return once(requestId, "goldTrade", p(holdingId, buy, grams.stripTrailingZeros().toPlainString(), accountId, cashMinor, date, note.trim())) {
+            existing(requestId)?.let { return@once it }
             val h = dao.goldHoldings().firstOrNull { it.id == holdingId } ?: throw LedgerException("القطعة غير موجودة")
             if (!buy) {
                 val have = GoldCalc.grams(h.toDomain(), dao.goldMoves().map { it.toDomain() }, date)
@@ -311,8 +375,8 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
                 guardGold(h.id, emptySet(), listOf(date to grams.negate()))
             }
             val t = uuid()
-            dao.insertTxn(TxnEntity(t, (if (buy) TxnType.GOLD_BUY else TxnType.GOLD_SELL).name, date.toString(), note.ifBlank { "${if (buy) "شراء" else "بيع"} ${Fmt.plain(grams)}غ ${h.name}" }, "", requestId, createdAtUtc = clock(), updatedAtUtc = clock()))
-            if (accountId != null && cashMinor != null && cashMinor > 0) {
+            dao.insertTxn(TxnEntity(t, (if (buy) TxnType.GOLD_BUY else TxnType.GOLD_SELL).name, date.toString(), note.ifBlank { "${if (buy) "شراء" else "بيع"} ${Fmt.plain(grams)}غ ${h.name}" + if (accountId == null) " (بلا حركة نقدية)" else "" }, "", requestId, createdAtUtc = clock(), updatedAtUtc = clock()))
+            if (accountId != null && cashMinor != null) {
                 val acc = account(accountId)
                 val signed = if (buy) -cashMinor else cashMinor
                 guardNegative(acc, signed, date)
@@ -320,7 +384,14 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
             }
             dao.insertGoldMove(GoldMoveEntity(uuid(), holdingId, (if (buy) GoldMoveType.BUY else GoldMoveType.SELL).name, (if (buy) grams else grams.negate()).toPlainString(), date.toString(), t))
             t
-        }
+        }!!
+    }
+
+    /** سياسة الوزن المعلنة: موجب، حتى 3 منازل عشرية (ملّيغرام)، وحتى 1,000,000 غ للحركة الواحدة. */
+    private fun checkGrams(g: BigDecimal, allowZero: Boolean = false) {
+        if (g.signum() < 0 || (!allowZero && g.signum() == 0)) throw LedgerException("الوزن يجب أن يكون أكبر من صفر")
+        if (g.stripTrailingZeros().scale() > 3) throw LedgerException("الوزن بثلاث منازل عشرية كحد أقصى")
+        if (g > MAX_GRAMS) throw LedgerException("الوزن أكبر من الحد المسموح")
     }
 
     // ---------------- التصحيح ----------------
@@ -328,8 +399,8 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
      * عكس حركة: حركة جديدة بقيود معاكسة، ومعها عكس السجل المرتبط (دفعة الدين، وزن الذهب، دفعة الزكاة) في معاملة واحدة.
      */
     suspend fun reverse(txnId: String, reason: String, requestId: String): String {
-        existing(requestId)?.let { return it }
-        return write {
+        return once(requestId, "reverse", p(txnId, reason.trim())) {
+            existing(requestId)?.let { return@once it }
             val t = dao.txn(txnId) ?: throw LedgerException("الحركة غير موجودة")
             if (t.reversedById != null) throw LedgerException("الحركة معكوسة مسبقاً")
             if (t.reversesId != null) throw LedgerException("لا يمكن عكس حركة عكس")
@@ -351,7 +422,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
             dao.updateTxn(t.copy(reversedById = r, updatedAtUtc = clock()))
             audit("txn", t.id, "reverse", "by=$r ${if (t.debtId != null) "debt=${t.debtId}" else ""} $reason")
             r
-        }
+        }!!
     }
 
     /**
@@ -436,11 +507,18 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
 
     /** دفعة زكاة منفّذة مرتبطة بمصروف «زكاة» في معاملة واحدة، بسعر يوم الدفع. */
     suspend fun addZakatPayment(estimateId: String, accountId: String, amountMinor: Long, rate: Rate, date: LocalDate, beneficiary: String, requestId: String): String {
-        existing(requestId)?.let { return it }
-        if (amountMinor <= 0) throw LedgerException("المبلغ يجب أن يكون أكبر من صفر")
-        return write {
-            existing(requestId)?.let { return@write it }
+        checkAmount(amountMinor)
+        return once(requestId, "zakatPayment", p(estimateId, accountId, amountMinor, rate.unit, rate.entered.stripTrailingZeros().toPlainString(), rate.direction, rate.date, date, beneficiary.trim())) {
+            existing(requestId)?.let { return@once it }
+            val est = dao.zakatEstimates().firstOrNull { it.id == estimateId } ?: throw LedgerException("تقدير الزكاة غير موجود")
+            if (est.status != app.rasidi.core.zakat.ZakatStatus.DUE.name) throw LedgerException("التقدير ليس «تجب الزكاة»؛ لا تُسجَّل عليه دفعات")
+            val inv = dao.inventories().firstOrNull { it.id == est.inventoryId }
+            if (inv != null && date.isBefore(LocalDate.parse(inv.date))) throw LedgerException("تاريخ الدفعة قبل تاريخ الجرد (${inv.date})")
             val acc = account(accountId)
+            // سعر يوم الدفع بعملة الحساب نفسها (الدولار بسعر الهوية)
+            if (rate.unit != acc.currency.code) throw LedgerException("السعر لعملة ${rate.unit} والحساب بعملة ${acc.currency.code}")
+            if (rate.date != date) throw LedgerException("السعر بتاريخ ${rate.date} والدفعة بتاريخ $date؛ أدخل سعر يوم الدفع")
+            if (acc.currency.code == Currencies.USD.code && rate.usdPerUnit.compareTo(BigDecimal.ONE) != 0) throw LedgerException("الدولار بسعر 1 دائماً")
             guardNegative(acc, -amountMinor, date)
             val usd = rate.toUsd(Money(amountMinor, acc.currency).amount)
             val t = uuid()
@@ -448,7 +526,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
             dao.insertEntries(listOf(EntryEntity(uuid(), t, acc.id, EntryKind.ZAKAT.name, -amountMinor, acc.currency.code, date.toString(), "cat-zakat".takeIf { dao.categories().any { c -> c.id == it } })))
             dao.insertZakatPayment(ZakatPaymentEntity(uuid(), estimateId, t, date.toString(), amountMinor, acc.currency.code, rate.entered.toPlainString(), rate.direction.name, rate.date.toString(), usd.toPlainString(), acc.id, beneficiary.trim()))
             t
-        }
+        }!!
     }
 
     // ---------------- الحسابات (الأشخاص) ----------------
@@ -462,13 +540,25 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
      * يُسجَّل ديناً سابقاً دون حركة نقدية: [owedToMe] = «لي معه» (مدين) وإلا «له معي» (دائن).
      */
     suspend fun addParty(name: String, phone: String, note: String, openingMinor: Long, currency: CurrencyDef, owedToMe: Boolean, date: LocalDate, requestId: String): String {
-        val n = name.trim()
+        val n = app.rasidi.core.backup.PartyIds.normalize(name)
         if (n.isBlank()) throw LedgerException("اسم الحساب مطلوب")
-        if (dao.parties().any { it.name == n }) throw LedgerException("يوجد حساب بالاسم «$n»")
-        write { dao.upsertParty(PartyEntity(app.rasidi.core.backup.PartyIds.forName(n), n, phone.trim(), note.trim(), false, clock())) }
-        if (openingMinor > 0) addDebt(n, if (owedToMe) DebtDirection.OWED_TO_ME else DebtDirection.I_OWE, openingMinor, currency, date, null, emptyList(), "رصيد سابق", null, null, requestId)
-        return n
+        if (openingMinor < 0) throw LedgerException("الرصيد السابق لا يكون سالباً؛ اختر «لي معه» أو «له معي»")
+        if (openingMinor > 0) checkAmount(openingMinor, "الرصيد السابق")
+        // الشخص ورصيده السابق وسجل الطلب والتدقيق في معاملة واحدة
+        return once(requestId, "addParty", p(n, phone.trim(), note.trim(), openingMinor, currency.code, owedToMe, date)) {
+            if (dao.parties().any { it.name == n }) throw LedgerException("يوجد حساب بالاسم «$n»")
+            val id = app.rasidi.core.backup.PartyIds.forName(n)
+            dao.upsertParty(PartyEntity(id, n, phone.trim(), note.trim(), false, clock()))
+            partyHook?.invoke("afterParty")
+            if (openingMinor > 0) addDebtTx(n, if (owedToMe) DebtDirection.OWED_TO_ME else DebtDirection.I_OWE, openingMinor, currency, date, null, emptyList(), "رصيد سابق", null, null, requestId)
+            audit("party", id, "create")
+            partyHook?.invoke("afterDebt")
+            n
+        }!!
     }
+
+    /** للاختبارات فقط: يُستدعى داخل معاملة إنشاء الشخص («afterParty» ثم «afterDebt») لمحاكاة فشل في منتصفها. */
+    internal var partyHook: (suspend (String) -> Unit)? = null
 
     /** تعديل الحساب؛ تغيير الاسم ينتقل إلى ديونه وحركاته في معاملة واحدة. */
     suspend fun updateParty(old: PartyEntity, name: String, phone: String, note: String, archived: Boolean = old.archived) = write {
@@ -552,7 +642,7 @@ class LedgerRepository(val db: RasidiDatabase, private val clock: () -> Long = S
         dao.clearRecurring(); dao.clearBudgets()
         dao.clearZakatPayments(); dao.clearZakatEstimates(); dao.clearInventoryLines(); dao.clearInventories()
         dao.clearDebtPayments(); dao.clearInstallments(); dao.clearGoldMoves(); dao.clearEntries(); dao.clearTxns()
-        dao.clearDebts(); dao.clearGoldHoldings(); dao.clearRates(); dao.clearCategories(); dao.clearAccounts(); dao.clearSettings(); dao.clearAudit(); dao.clearMembers(); dao.clearParties()
+        dao.clearDebts(); dao.clearGoldHoldings(); dao.clearRates(); dao.clearCategories(); dao.clearAccounts(); dao.clearSettings(); dao.clearAudit(); dao.clearMembers(); dao.clearParties(); reqDao.clear()
         dao.insertMembers(s.members); dao.insertParties(s.parties)
         dao.insertAccounts(s.accounts); dao.insertCategories(s.categories); dao.insertTxns(s.txns); dao.insertEntries(s.entries)
         dao.insertDebts(s.debts); dao.insertInstallments(s.installments); dao.insertDebtPayments(s.debtPayments)

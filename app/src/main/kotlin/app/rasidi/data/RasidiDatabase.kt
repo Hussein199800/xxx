@@ -23,6 +23,19 @@ data class BackupJobEntity(
     val updatedAtUtc: Long,
 )
 
+/**
+ * سجل الطلبات (منع التكرار): لكل نية حفظ معرّف ثابت، ونوع العملية وبصمة مدخلاتها ونتيجتها.
+ * محلي للجهاز مثل [BackupJobEntity]: لا يدخل في اللقطة ولا النسخ (DATA_VERSION لا يتغيّر)، ويُمسح عند الاستعادة.
+ */
+@Entity(tableName = "requests")
+data class RequestEntity(
+    @PrimaryKey val requestId: String,
+    val op: String,
+    val payloadHash: String,
+    val resultId: String?,
+    val createdAtUtc: Long,
+)
+
 @Database(
     entities = [
         AccountEntity::class, CategoryEntity::class, TxnEntity::class, EntryEntity::class,
@@ -31,6 +44,7 @@ data class BackupJobEntity(
         InventoryEntity::class, InventoryLineEntity::class, ZakatEstimateEntity::class, ZakatPaymentEntity::class,
         SettingEntity::class, AuditEntity::class, BackupJobEntity::class,
         MemberEntity::class, BudgetEntity::class, RecurringEntity::class, PartyEntity::class,
+        RequestEntity::class,
     ],
     version = RasidiDatabase.VERSION,
     exportSchema = true,
@@ -38,14 +52,15 @@ data class BackupJobEntity(
 abstract class RasidiDatabase : RoomDatabase() {
     abstract fun dao(): LedgerDao
     abstract fun jobs(): BackupJobDao
+    abstract fun requests(): RequestDao
 
     companion object {
-        const val VERSION = 3
+        const val VERSION = 4
         const val LEDGER_DB = "rasidi.db"
         const val DEMO_DB = "rasidi-demo.db"
 
         /** قائمة الترحيلات. كل ترحيل جديد يُضاف هنا مع اختبار في MigrationTest. */
-        val MIGRATIONS: Array<androidx.room.migration.Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+        val MIGRATIONS: Array<androidx.room.migration.Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
 
         fun open(ctx: Context, name: String): RasidiDatabase =
             Room.databaseBuilder(ctx, RasidiDatabase::class.java, name)
@@ -92,5 +107,12 @@ val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
         rows.map { app.rasidi.core.backup.PartyIds.normalize(it.second) }.filter { it.isNotEmpty() }.distinct().forEach { n ->
             db.execSQL("INSERT OR IGNORE INTO parties (id, name, phone, note, archived, createdAtUtc) VALUES (?, ?, '', '', 0, 0)", arrayOf<Any>(app.rasidi.core.backup.PartyIds.forName(n), n))
         }
+    }
+}
+
+/** 3 → 4: جدول الطلبات (منع التكرار) — جدول جديد فارغ لا يمسّ أي بيانات. */
+val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `requests` (`requestId` TEXT NOT NULL, `op` TEXT NOT NULL, `payloadHash` TEXT NOT NULL, `resultId` TEXT, `createdAtUtc` INTEGER NOT NULL, PRIMARY KEY(`requestId`))")
     }
 }

@@ -98,7 +98,8 @@ fun AccountDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
     val counted = remember { AmountState() }
     var export by remember { mutableStateOf(false) }
     var hideNames by remember { mutableStateOf(false) }; var hideNotes by remember { mutableStateOf(false) }
-    val rid = rememberSaveable { vm.newRequestId() }
+    // معرّف ثابت لنية الحفظ الحالية، يتجدد بعد نجاحها (الشاشة تبقى مفتوحة لعدّ لاحق)
+    var rid by rememberSaveable { mutableStateOf(vm.newRequestId()) }
     val st = remember(view, from, to) { Balances.statement(a, view.entries, from, to) }
     ScreenScaffold(a.name, { nav.popBackStack() }, sub = "${a.type.ar} · ${a.currency.nameAr}") {
         RCard {
@@ -140,7 +141,7 @@ fun AccountDetailScreen(vm: MainViewModel, nav: NavController, id: String) {
                 counted.parse(a.currency)?.let { m ->
                     val diff = m - view.balance(a, today)
                     Text("الفرق: ${Fmt.money(diff)}", color = if (diff.isZero) c.pri else c.warn, style = MaterialTheme.typography.titleMedium)
-                    PrimaryButton("سجّل التسوية", enabled = !diff.isZero, onClick = { vm.launchSafe("سُجّلت التسوية") { vm.repo.adjustToCount(id, m.minor, today, rid); count = false } })
+                    PrimaryButton("سجّل التسوية", enabled = !diff.isZero, onClick = { vm.launchSafe("سُجّلت التسوية") { vm.repo.adjustToCount(id, m.minor, today, rid); rid = vm.newRequestId(); count = false } })
                 }
             }
         }

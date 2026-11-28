@@ -181,18 +181,28 @@ object Distribution {
     }
 
     /**
-     * يقسم المتبقي بين عملات وفق حصص (مجموعها 1)، ويعدّل الدفعة الأخيرة لتغطي فرق التقريب.
+     * يقسم المتبقي بين عملات وفق حصص غير سالبة مجموعها 1، ويقرّب الدفعة الأخيرة للأعلى لتغطي فرق التقريب.
+     * لا ينتج دفعة سالبة أو صفرية: المتبقي ≤ 0 أو قائمة فارغة ⇒ لا خطة؛ وإن غطّت الدفعات السابقة المتبقي بالتقريب لا تُضاف دفعة أخيرة.
      */
     fun planByShares(remainingUsd: BigDecimal, shares: List<Triple<BigDecimal, Rate, app.rasidi.core.money.CurrencyDef>>): List<PlannedPayment> {
+        if (remainingUsd.signum() <= 0 || shares.isEmpty()) return emptyList()
+        require(shares.all { it.first.signum() >= 0 }) { "الحصص لا تكون سالبة" }
+        val sum = shares.fold(BigDecimal.ZERO) { a, t -> a + t.first }
+        require((sum - BigDecimal.ONE).abs() <= BigDecimal("1E-9")) { "مجموع الحصص يجب أن يساوي 1" }
+        shares.forEach { (_, rate, cur) -> require(rate.unit == cur.code) { "سعر ${rate.unit} لا يطابق العملة ${cur.code}" } }
         var left = remainingUsd
-        return shares.mapIndexed { i, (share, rate, cur) ->
-            val target = if (i == shares.lastIndex) left else remainingUsd.multiply(share)
-            // الدفعة الأخيرة تُقرَّب للأعلى حتى لا يبقى نقص بسبب التقريب
+        val out = mutableListOf<PlannedPayment>()
+        shares.forEachIndexed { i, (share, rate, cur) ->
+            val last = i == shares.lastIndex
+            val target = if (last) left else remainingUsd.multiply(share)
+            if (target.signum() <= 0) return@forEachIndexed
             val raw = rate.fromUsd(target)
-            val amt = if (i == shares.lastIndex) raw.setScale(cur.minorDigits, RoundingMode.CEILING) else raw.setScale(cur.minorDigits, MoneyPolicy.ROUNDING)
+            val amt = if (last) raw.setScale(cur.minorDigits, RoundingMode.CEILING) else raw.setScale(cur.minorDigits, MoneyPolicy.ROUNDING)
+            if (amt.signum() <= 0) return@forEachIndexed
             val p = PlannedPayment(Money.of(amt, cur), rate)
             left -= p.usd
-            p
+            out += p
         }
+        return out
     }
 }

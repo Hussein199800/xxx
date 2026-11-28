@@ -84,7 +84,7 @@ sealed interface RateLookup {
 }
 
 class RateBook(rates: List<Rate>) {
-    private val byUnit = rates.groupBy { it.unit }.mapValues { e -> e.value.sortedWith(compareBy<Rate> { it.date }.thenBy { it.observedAtUtc }) }
+    private val byUnit = rates.groupBy { it.unit }.mapValues { e -> e.value.sortedWith(compareBy<Rate> { it.date }.thenBy { it.observedAtUtc }.thenBy { it.id }) } // ترتيب حتمي عند التعادل
 
     fun lookup(unit: String, date: LocalDate): RateLookup {
         if (unit == Currencies.USD.code) return RateLookup.Exact(USD_IDENTITY.copy(date = date))

@@ -120,6 +120,13 @@ interface LedgerDao {
 }
 
 @Dao
+interface RequestDao {
+    @Query("SELECT * FROM requests WHERE requestId = :id") suspend fun get(id: String): RequestEntity?
+    @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insert(r: RequestEntity)
+    @Query("DELETE FROM requests") suspend fun clear()
+}
+
+@Dao
 interface BackupJobDao {
     @Insert suspend fun insert(j: BackupJobEntity)
     @Update suspend fun update(j: BackupJobEntity)
